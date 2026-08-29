@@ -37,7 +37,7 @@
 #if !defined(GIVENS_H)
 #define GIVENS_H
 
-#include "mex.h"
+#include "sedumi_platform.h"
 
 typedef struct{
   double x,y;} twodouble;

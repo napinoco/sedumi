@@ -36,31 +36,7 @@
 
 #if !defined(BLKSDP)
 #define BLKSDP
-#include "mex.h"
-#ifdef OCTAVE
-#include "f77blas.h"  /* defines "blasint" data type */
-#define FORT(x) BLASFUNC(x)
-#else /* Matlab */
-#include "blas.h"
-typedef ptrdiff_t blasint;
-/**
- * For Matlab R2019a (probably before) and newer, when including
- * "blas.h" the respective BLAS identifiers are already defined,
- * e.g. for "dcopy":
- *
- *   #define dcopy FORTRAN_WRAPPER(dcopy)
- *
- * thus calling FORT(dcopy) == FORTRAN_WRAPPER(dcopy) inside SeDuMi
- * would result in "dcopy__" and already resulted in some bug reports.
- *
- * Compiling with -DFWRAPPER restores the previous behavior.
- */
-#ifdef FWRAPPER
-#define FORT(x) FORTRAN_WRAPPER(x)
-#else
-#define FORT(x) x
-#endif
-#endif
+#include "sedumi_platform.h"
 
 /* ------------------------------------------------------------
    Type definitions:
@@ -81,6 +57,30 @@ typedef struct{
   mwSize qMaxn,rMaxn,hMaxn, rLen,hLen,  qDim,rDim,hDim;
   const double *lorNL,*rconeNL,*sdpNL;
 } coneK;
+
+/* Plain-C mirror of the fields conepars() reads off the MATLAB/Octave "K"
+   struct (K.f, K.l, K.q, K.r, K.s, K.rsdpN, and the optional precomputed
+   K.rLen/K.hLen/K.qMaxn/K.rMaxn/K.hMaxn/K.blkstart statistics). Used by
+   conepars_raw() so cone parsing has no mxArray dependency; a MEX build
+   still exposes conepars(mxArray*, coneK*), which fills this struct from
+   the mxArray and delegates to conepars_raw(). A standalone caller (e.g.
+   the Python bindings) fills this struct directly, from arrays it holds
+   with no MATLAB/Octave layer involved at all. */
+typedef struct{
+  double f, l;                    /* K.f, K.l; 0 if absent, as in mex */
+  const double *q; mwSize qN;      /* K.q; qN==0 if absent (or K.q==0) */
+  const double *r; mwSize rN;      /* K.r; rN==0 if absent (or K.r==0) */
+  const double *s; mwSize sN;      /* K.s; sN==0 if absent (or K.s==0) */
+  char rsdpNgiven; double rsdpN;    /* K.rsdpN; defaults to sN if absent */
+  /* Optional precomputed statistics (K.rLen/K.hLen/K.qMaxn/K.rMaxn/
+     K.hMaxn/K.blkstart): statsGiven must be nonzero for these to be used,
+     otherwise conepars_raw() recomputes them from q/r/s directly. */
+  char statsGiven;
+  double rLen, hLen, qMaxn, rMaxn, hMaxn;
+  const double *blkstart; mwSize blkstartN;
+} sedumiKRaw;
+
+void conepars_raw(const sedumiKRaw *rawK, coneK *pK);
 
 /* ------------------------------------------------------------
    Macros:
@@ -168,7 +168,9 @@ void minusHadamard(double * r, const double *x, const double *y, const mwSize n)
 void realHadarow(double * r, const double *x, const double *y, const mwSize n);
 void realHadadiv(double * r, const double *x, const double *y, const mwSize n);
 void fzeros(double *z,const mwSize n);
+#ifndef SEDUMI_STANDALONE
 void conepars(const mxArray *mxK, coneK *pK);
+#endif
 void someStats(mwSize *pxmax, mwIndex *pxsum, mwIndex *pxssqr,
 	       const double *x, const mwSize n);
 mwIndex spsqrscale(double *z, mwIndex *blks, const mwIndex *zjc, const mwIndex *zir,
