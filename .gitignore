@@ -172,3 +172,13 @@ opti_SEDUMI_Install.m
 
 # Do not track changes to the mex files.
 *.mex*
+*.oct
+
+##################
+## Python port (python_port/)
+##################
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
