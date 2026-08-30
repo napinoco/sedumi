@@ -1090,11 +1090,21 @@ def givensrot(gjc, g, x, K: dict):
     return y
 
 
-def urotorder(u, K: dict, maxu: float):
-    """[u_out, perm, gjc, g] = urotorder(u, K, maxu): stably reorders
-    each real PSD block's upper-triangular factor via Givens rotations.
-    Real-symmetric blocks only. Wraps rotorder() (urotorder.c) per block,
-    then uperm()+triu2sym() to physically permute and symmetrize."""
+def urotorder(u, K: dict, maxu: float, perm_in=None):
+    """[u_out, perm, gjc, g] = urotorder(u, K, maxu, perm_in=None):
+    stably reorders each real PSD block's upper-triangular factor via
+    Givens rotations. Real-symmetric blocks only. Wraps rotorder()
+    (urotorder.c) per block, then uperm()+triu2sym() to physically
+    permute and symmetrize.
+
+    `perm_in`, if given (matching urotorder.m's optional 4th argument),
+    is composed with the freshly computed per-block permutation instead
+    of just converting it to 1-indexed
+    (`perm_out[i] = perm_in[perm[i]]` per urotorder.c's own
+    `permPr[i] = permOld[perm[i]]`) -- done here in Python rather than
+    by extending the C call, since the underlying rotation math is
+    identical either way; only how the output `perm` is labeled changes.
+    """
     import numpy as np
 
     cK = cone_from_dict(K)
@@ -1103,6 +1113,9 @@ def urotorder(u, K: dict, maxu: float):
     perm_out = np.zeros(cK.rLen + cK.hLen, dtype=np.float64)
     gjc_out = np.zeros(cK.rLen + cK.hLen, dtype=np.float64)
     g_chunks = []
+    perm_in_arr = None
+    if perm_in is not None and np.asarray(perm_in).size:
+        perm_in_arr = np.ascontiguousarray(perm_in, dtype=np.int64).ravel()
 
     xoff = poff = 0
     for nk in _real_sdp_blocks(cK):
@@ -1127,7 +1140,10 @@ def urotorder(u, K: dict, maxu: float):
         u_out[xoff : xoff + nksqr] = block_out
 
         ginz = int(gjc[nk - 1]) if nk > 0 else 0
-        perm_out[poff : poff + nk] = perm + 1  # 1-indexed, .m-facing
+        if perm_in_arr is not None:
+            perm_out[poff : poff + nk] = perm_in_arr[poff : poff + nk][perm.astype(np.int64)]
+        else:
+            perm_out[poff : poff + nk] = perm + 1  # 1-indexed, .m-facing
         gjc_out[poff : poff + nk] = gjc
         g_chunks.append(g[: 2 * ginz])
         xoff += nksqr

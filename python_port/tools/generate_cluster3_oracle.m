@@ -77,5 +77,14 @@ yg = givensrot(gjc, g, xg, K);
 save('-v7', fullfile(out_dir, 'urotorder.mat'), 'u2', 'maxu', 'u_out', 'perm', 'gjc', 'g');
 save('-v7', fullfile(out_dir, 'givensrot.mat'), 'gjc', 'g', 'xg', 'yg', 'K');
 
+%% urotorder with the optional 4th arg (perm_in): composes the freshly
+%% computed per-block permutation with a caller-supplied prior one
+%% (updtransfo.m's own usage: `urotorder(d.u,K,1.1,dIN.perm)`), instead
+%% of just 1-indexing it.
+permIn = [randperm(3)'; randperm(2)'];
+[u_permin, perm_permin, gjc_permin, g_permin] = urotorder(u2, K, maxu, permIn);
+save('-v7', fullfile(out_dir, 'urotorder_permin.mat'), ...
+     'u2', 'maxu', 'permIn', 'u_permin', 'perm_permin', 'gjc_permin', 'g_permin');
+
 save('-v7', fullfile(out_dir, 'K.mat'), 'K');
 fprintf('Cluster 3 oracle written to %s\n', out_dir);

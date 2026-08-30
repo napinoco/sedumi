@@ -81,6 +81,21 @@ def test_urotorder_matches_octave_mex():
     np.testing.assert_allclose(g, data["g"].ravel(), rtol=1e-8, atol=1e-10)
 
 
+def test_urotorder_permin_matches_octave_mex():
+    """urotorder's optional 4th argument (perm_in), added for
+    updtransfo.m's own usage (`urotorder(d.u,K,1.1,dIN.perm)`) -- not
+    exercised by cluster 3's own original test above."""
+    data = scipy.io.loadmat(FIXTURE_DIR / "urotorder_permin.mat")
+    K = _K()
+    u_out, perm, gjc, g = _native.urotorder(
+        data["u2"].ravel(), K, float(data["maxu"].item()), perm_in=data["permIn"].ravel()
+    )
+    np.testing.assert_allclose(u_out, data["u_permin"].ravel(), rtol=1e-8, atol=1e-10)
+    np.testing.assert_array_equal(perm, data["perm_permin"].ravel())
+    np.testing.assert_array_equal(gjc, data["gjc_permin"].ravel())
+    np.testing.assert_allclose(g, data["g_permin"].ravel(), rtol=1e-8, atol=1e-10)
+
+
 def test_givensrot_matches_octave_mex():
     data = scipy.io.loadmat(FIXTURE_DIR / "givensrot.mat")
     Kstruct = data["K"][0, 0]
