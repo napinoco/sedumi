@@ -42,6 +42,7 @@ yin = rand(lenud, 1);
 zout = psdinvjmul(evx, frms, yin, K);
 save('-v7', fullfile(out_dir, 'psdinvjmul.mat'), 'frms', 'evx', 'yin', 'zout');
 
+
 %% invcholfac: y = U'*U (no perm) and y = invperm(U'*U) (with perm).
 %% IMPORTANT: perm is BLOCK-LOCAL, not globally offset -- invcholfac.c's
 %% own mexFunction converts the whole perm array 1-indexed->0-indexed
@@ -87,4 +88,28 @@ save('-v7', fullfile(out_dir, 'urotorder_permin.mat'), ...
      'u2', 'maxu', 'permIn', 'u_permin', 'perm_permin', 'gjc_permin', 'g_permin');
 
 save('-v7', fullfile(out_dir, 'K.mat'), 'K');
+
+%% psdinvjmul, FULL-length x/y (with a nonzero L+Q prefix to skip) --
+%% regression case for a real gap found while porting wregion.m: the
+%% ctypes binding didn't replicate psdinvjmul.c's own mexFunction
+%% auto-slicing (`x += cK.lpN+2*cK.lorN`, `y += cK.lpN+cK.qDim`) when
+%% given full-length inputs (as wregion.m always does, passing vTAR/
+%% dxmdz directly) instead of PSD-only-length ones (as cluster 3's own
+%% psdinvjmul test above always did) -- see _native.py's psdinvjmul()
+%% docstring. Appended at the end so it doesn't perturb the shared
+%% 'rand' stream feeding the other, pre-existing cluster-3 fixtures.
+Kfull.l = 2; Kfull.q = [3;4]; Kfull.s = [3;2]; Kfull.rsdpN = 2;
+lorNfull = length(Kfull.q);
+lqfull = Kfull.l + sum(Kfull.q);
+lendiag_full = Kfull.l + 2*lorNfull + sum(Kfull.s);
+lenud_full = 3^2 + 2^2;
+lenfull_full = lqfull + lenud_full;
+u_full = rand(lenud_full,1);
+[frms_full, ~] = qrK(u_full, Kfull);
+evx_full = rand(lendiag_full, 1) + 1;
+yin_full = rand(lenfull_full, 1);
+zout_full = psdinvjmul(evx_full, frms_full, yin_full, Kfull);
+save('-v7', fullfile(out_dir, 'psdinvjmul_full.mat'), ...
+     'Kfull', 'frms_full', 'evx_full', 'yin_full', 'zout_full');
+
 fprintf('Cluster 3 oracle written to %s\n', out_dir);

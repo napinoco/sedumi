@@ -81,6 +81,26 @@ def test_urotorder_matches_octave_mex():
     np.testing.assert_allclose(g, data["g"].ravel(), rtol=1e-8, atol=1e-10)
 
 
+def test_psdinvjmul_full_length_matches_octave_mex():
+    """Regression test for a real gap found while porting wregion.m:
+    psdinvjmul()'s ctypes binding didn't replicate psdinvjmul.c's own
+    mexFunction auto-slicing of full-length x/y inputs (skipping the
+    L+Q prefix) -- only ever exercised with PSD-only-length inputs by
+    cluster 3's own original test above."""
+    data = scipy.io.loadmat(FIXTURE_DIR / "psdinvjmul_full.mat")
+    Kfullmat = data["Kfull"][0, 0]
+    K = {
+        "l": int(Kfullmat["l"].item()),
+        "q": Kfullmat["q"].ravel(),
+        "s": Kfullmat["s"].ravel().tolist(),
+        "rsdpN": int(Kfullmat["rsdpN"].item()),
+    }
+    zout = _native.psdinvjmul(
+        data["evx_full"].ravel(), data["frms_full"].ravel(), data["yin_full"].ravel(), K
+    )
+    np.testing.assert_allclose(zout, data["zout_full"].ravel(), rtol=1e-8, atol=1e-10)
+
+
 def test_urotorder_permin_matches_octave_mex():
     """urotorder's optional 4th argument (perm_in), added for
     updtransfo.m's own usage (`urotorder(d.u,K,1.1,dIN.perm)`) -- not

@@ -1206,7 +1206,16 @@ def psdinvjmul(x, frms, y, K: dict):
     """z = psdinvjmul(x, frms, y, K): solves X*Z+Z*X = 2*Y in the PSD
     cone, given X's eigenvalues `x` and eigenbasis `frms` (product-form
     Householder, as from qrK()). Real-symmetric blocks only. Wraps
-    psdinvjmul() (psdinvjmul.c) directly (loops over blocks itself)."""
+    psdinvjmul() (psdinvjmul.c) directly (loops over blocks itself).
+
+    `x` and `y` may each be given either as exactly the PSD-only length
+    (cK.rLen+cK.hLen for x, cK.rDim+cK.hDim for y) or as a full internal
+    vector (L+Q+S) -- matching psdinvjmul.c's own mexFunction, which
+    auto-detects a full-length input and skips its L+Q prefix
+    (`x += cK.lpN + 2*cK.lorN`, `y += cK.lpN + cK.qDim`) rather than
+    silently misreading a full vector as if it started at the PSD block
+    (the bug this replicated fix corrects: found while porting
+    wregion.m, which always calls this with full-length vTAR/dxmdz)."""
     import numpy as np
 
     cK = cone_from_dict(K)
@@ -1214,6 +1223,10 @@ def psdinvjmul(x, frms, y, K: dict):
     x = np.ascontiguousarray(x, dtype=np.float64).ravel()
     y = np.ascontiguousarray(y, dtype=np.float64).ravel()
     lenud = cK.rDim + cK.hDim
+    if x.size != cK.rLen + cK.hLen:
+        x = x[cK.lpN + 2 * cK.lorN :]
+    if y.size != lenud:
+        y = y[cK.lpN + cK.qDim :]
     z = np.zeros(lenud, dtype=np.float64)
     fwsiz = max(cK.rMaxn, 2 * cK.hMaxn, 1)
     fwork = np.zeros(fwsiz, dtype=np.float64)
