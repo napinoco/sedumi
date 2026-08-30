@@ -112,6 +112,28 @@ _lib.scalarmul.restype = None
 _lib.addscalarmul.argtypes = [c_double_p, ctypes.c_double, c_double_p, ctypes.c_size_t]
 _lib.addscalarmul.restype = None
 
+_lib.fwsolve.argtypes = [
+    c_double_p,
+    c_size_t_p,
+    c_size_t_p,
+    c_double_p,
+    c_size_t_p,
+    ctypes.c_size_t,
+    c_double_p,
+]
+_lib.fwsolve.restype = None
+
+_lib.bwsolve.argtypes = [
+    c_double_p,
+    c_size_t_p,
+    c_size_t_p,
+    c_double_p,
+    c_size_t_p,
+    ctypes.c_size_t,
+    c_double_p,
+]
+_lib.bwsolve.restype = None
+
 
 def _as_double_array(x):
     import numpy as np
@@ -153,6 +175,58 @@ def addscalarmul(r, alpha: float, x):
     xa, xp = _as_double_array(x)
     _lib.addscalarmul(rp, float(alpha), xp, xa.size)
     return ra
+
+
+def _as_index_array(x):
+    import numpy as np
+
+    arr = np.ascontiguousarray(x, dtype=np.uintp)
+    ptr = arr.ctypes.data_as(c_size_t_p)
+    return arr, ptr
+
+
+def fwsolve(L_csc, xsuper, y):
+    """Forward-solve y := L \\ y in place, where L is the unit-lower-
+    triangular factor from SeDuMi's supernodal Cholesky (blkchol), stored
+    exactly like `scipy.sparse.csc_matrix` (indptr/indices/data), and
+    `xsuper` marks each supernode's first column (length nsuper+1, as
+    produced by symbchol). L's stored diagonal entries are never read --
+    only their presence in the sparsity pattern matters, per fwblkslv.c.
+
+    This wraps fwsolve() in fwblkslv.c (sedumi's forward substitution
+    kernel) with no MATLAB/Octave/MEX layer at all.
+    """
+    Ljc, Ljc_p = _as_index_array(L_csc.indptr)
+    Lir, Lir_p = _as_index_array(L_csc.indices)
+    Lpr, Lpr_p = _as_double_array(L_csc.data)
+    xs, xs_p = _as_index_array(xsuper)
+    ya, y_p = _as_double_array(y)
+
+    nsuper = xs.size - 1
+    m = L_csc.shape[0]
+    fwork = ctypes.create_string_buffer(8 * m)  # generous upper bound
+    fwork_p = ctypes.cast(fwork, c_double_p)
+
+    _lib.fwsolve(y_p, Ljc_p, Lir_p, Lpr_p, xs_p, nsuper, fwork_p)
+    return ya
+
+
+def bwsolve(L_csc, xsuper, y):
+    """Backward-solve y := L' \\ y in place -- see fwsolve()'s docstring;
+    wraps bwsolve() in bwblkslv.c."""
+    Ljc, Ljc_p = _as_index_array(L_csc.indptr)
+    Lir, Lir_p = _as_index_array(L_csc.indices)
+    Lpr, Lpr_p = _as_double_array(L_csc.data)
+    xs, xs_p = _as_index_array(xsuper)
+    ya, y_p = _as_double_array(y)
+
+    nsuper = xs.size - 1
+    m = L_csc.shape[0]
+    fwork = ctypes.create_string_buffer(8 * m)  # generous upper bound
+    fwork_p = ctypes.cast(fwork, c_double_p)
+
+    _lib.bwsolve(y_p, Ljc_p, Lir_p, Lpr_p, xs_p, nsuper, fwork_p)
+    return ya
 
 
 def cone_from_dict(K: dict) -> ConeK:
