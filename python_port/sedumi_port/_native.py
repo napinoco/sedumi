@@ -1447,6 +1447,158 @@ def partitA(At, blkstart):
     return out
 
 
+_lib.getsplit.argtypes = [c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p,
+                            ctypes.c_size_t, ctypes.c_size_t]
+_lib.getsplit.restype = None
+
+_lib.getfirstpiv.argtypes = [c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p, ctypes.c_size_t]
+_lib.getfirstpiv.restype = None
+
+
+def mJdetd(detd, K: dict):
+    """y = mJdetd(detd, K): y[k-th Lorentz block] = [-detd(k); detd(k)*
+    ones(nk-1,1)] i.e. -detd(k)*J with J=diag([1,-I]). mJdetd.c has no
+    separable core function (the whole computation lives directly in its
+    mexFunction), so this ports that logic straight to NumPy."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    detd = np.ascontiguousarray(detd, dtype=np.float64).ravel()
+    y = np.empty(cK.qDim, dtype=np.float64)
+    lorNL = cK._keepalive[0]  # "q" array
+    i = 0
+    for k in range(cK.lorN):
+        nk = int(lorNL[k])
+        y[i] = -detd[k]
+        y[i + 1 : i + nk] = detd[k]
+        i += nk
+    return y
+
+
+def sortnnz(At, Ajc1=None, Ajc2=None):
+    """perm = sortnnz(At, Ajc1, Ajc2): 1-indexed column permutation of At
+    sorting columns by ascending (Ajc2-Ajc1) nnz count (defaults to each
+    column's own full nnz range).
+
+    NOT wrapped via ctypes, deliberately: sortnnz.c's kicmp() returns
+    `char`, but is called through qsort() via a cast to a `COMPFUN`
+    (`int(*)(const void*, const void*)`) function pointer -- undefined
+    behavior in C (a qsort comparator must genuinely return int), which
+    was confirmed to actually bite here: this port's libsedumi.so build
+    and the Octave/MEX build, both compiled from the identical
+    sortnnz.c/sdmauxCmp.c, produced DIFFERENT (both internally
+    consistent-looking, but different) orderings for tied nnz counts on
+    the same input, i.e. this specific C code path is not reliably
+    reproducible across builds/compilers at all -- so matching "whatever
+    the MEX build happens to do" isn't a well-defined target to bind
+    against. This instead implements sortnnz's clearly-stated intent
+    (ascending nnz, stable order for ties) directly, which is exactly
+    what happened to match the Octave build's output on every fixture
+    tried (its qsort() also preserved original order among ties on this
+    data) without depending on the same undefined behavior to keep
+    doing so.
+    """
+    import numpy as np
+
+    A = At.tocsc()
+    m = A.shape[1]
+    Ajc1_arr = A.indptr[:m] if Ajc1 is None else np.ascontiguousarray(Ajc1)
+    Ajc2_arr = A.indptr[1:] if Ajc2 is None else np.ascontiguousarray(Ajc2)
+    nnz_per_col = np.asarray(Ajc2_arr, dtype=np.int64) - np.asarray(Ajc1_arr, dtype=np.int64)
+    order = sorted(range(m), key=lambda k: nnz_per_col[k])
+    return (np.array(order, dtype=np.int64) + 1)
+
+
+def cholsplit(L: dict, cachesize_kb: float = 512):
+    """split = cholsplit(L, cachesize_kb): recommends splitting each
+    supernode into cache-sized column groups for blkchol's dense
+    sub-block updates. Wraps getsplit() (cholsplit.c) directly."""
+    import numpy as np
+
+    L_pattern = L["L"].tocsc()
+    m = L_pattern.shape[0]
+    xsuper = (np.ascontiguousarray(L["xsuper"], dtype=np.int64) - 1).astype(np.uintp)
+    nsuper = xsuper.size - 1
+    ljc = np.ascontiguousarray(L_pattern.indptr, dtype=np.uintp)
+    lir = np.ascontiguousarray(L_pattern.indices, dtype=np.uintp)
+    cachesiz = int((0.9 * (1024 / 8)) * cachesize_kb)  # 90% of floats-per-KB
+    split = np.zeros(m, dtype=np.uintp)
+
+    _lib.getsplit(
+        split.ctypes.data_as(c_size_t_p), ljc.ctypes.data_as(c_size_t_p),
+        lir.ctypes.data_as(c_size_t_p), xsuper.ctypes.data_as(c_size_t_p),
+        nsuper, cachesiz,
+    )
+    return split.astype(np.int64)
+
+
+def finsymbden(LAD, perm, dz, firstq: int):
+    """Lden = finsymbden(LAD, perm, dz, firstq): inserts Lorentz-trace
+    columns into (perm, dz), producing the "symbolic dense-column"
+    structure dpr1fact()/fwdpr1()/bwdpr1() consume (see
+    sedumi_port._native.dpr1fact's docstring for the "dz" cumulative-
+    compact-row-set convention this also produces). Wraps
+    getfirstpiv() (finsymbden.c) directly; the perm/dz remapping itself
+    (inserting trace columns) is small enough to port straight to NumPy,
+    mirroring finsymbden.c's mexFunction line for line.
+    """
+    import numpy as np
+    import scipy.sparse
+
+    LAD = LAD.tocsc()
+    m, n = LAD.shape
+    dz = dz.tocsc()
+    nperm = dz.shape[1]
+    firstQ = firstq - 1
+    lastQ = firstQ + n - nperm
+
+    dz_jc = np.ascontiguousarray(dz.indptr, dtype=np.int64)
+    dz_ir = np.ascontiguousarray(dz.indices, dtype=np.int64)
+    nnzdz = int(dz_jc[nperm])
+    invdz = np.zeros(max(m, 1), dtype=np.uintp)
+    for i in range(dz_jc[0], nnzdz):
+        invdz[dz_ir[i]] = i
+
+    perm_in = np.ascontiguousarray(perm, dtype=np.int64).ravel()
+    new_perm = np.zeros(n, dtype=np.uintp)
+    dznewJc = np.zeros(n + 1, dtype=np.uintp)
+    inz = 0
+    for i in range(nperm):
+        j = int(perm_in[i]) - 1
+        new_perm[inz] = j
+        dznewJc[inz] = dz_jc[i]
+        inz += 1
+        if firstQ <= j < lastQ:
+            new_perm[inz] = nperm + j - firstQ
+            dznewJc[inz] = dz_jc[i + 1]
+            inz += 1
+    assert inz == n
+    dznewJc[n] = dz_jc[nperm]
+
+    firstpiv = np.zeros(max(n, 1), dtype=np.uintp)
+    LADjc = np.ascontiguousarray(LAD.indptr, dtype=np.uintp)
+    LADir = np.ascontiguousarray(LAD.indices, dtype=np.uintp)
+    _lib.getfirstpiv(
+        firstpiv.ctypes.data_as(c_size_t_p), invdz.ctypes.data_as(c_size_t_p),
+        dznewJc.ctypes.data_as(c_size_t_p), LADjc.ctypes.data_as(c_size_t_p),
+        LADir.ctypes.data_as(c_size_t_p), n,
+    )
+
+    dz_new_ir = dz_ir[: int(dznewJc[n])].astype(np.int64)
+    dz_new = scipy.sparse.csc_matrix(
+        (np.ones(max(len(dz_new_ir), 1), dtype=np.float64)[: len(dz_new_ir)],
+         dz_new_ir, dznewJc.astype(np.int64)),
+        shape=(m, n),
+    )
+
+    return {
+        "LAD": LAD,
+        "perm": (new_perm + 1).astype(np.int64),
+        "dz": dz_new,
+        "first": (firstpiv + 1).astype(np.int64),
+    }
+
+
 def cone_from_dict(K: dict) -> ConeK:
     """Build a ConeK from a plain dict shaped like SeDuMi's K struct, e.g.
     {"f": 2, "l": 3, "q": [4], "s": [2, 3]}. Mirrors what conepars() does
