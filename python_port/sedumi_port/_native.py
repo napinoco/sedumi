@@ -1270,6 +1270,183 @@ def invcholfac(u, K: dict, perm=None):
     return y
 
 
+# extractA()/adendotd() take a `jcir` struct ({double *pr; mwIndex *jc,
+# *ir;}) BY VALUE (not by pointer) -- ctypes marshals a ctypes.Structure
+# argument per the platform ABI automatically, so this just needs the
+# matching field layout, not any special handling on the call site.
+class JcIr(ctypes.Structure):
+    _fields_ = [("pr", c_double_p), ("jc", c_size_t_p), ("ir", c_size_t_p)]
+
+
+_lib.extractA.argtypes = [JcIr, c_size_t_p, c_size_t_p, c_size_t_p, c_double_p,
+                            ctypes.c_size_t, ctypes.c_size_t]
+_lib.extractA.restype = None
+
+_lib.findblks.argtypes = [
+    c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p,
+    c_size_t_p, c_size_t_p, ctypes.c_size_t, ctypes.c_size_t,
+    ctypes.c_size_t, c_ubyte_p, c_size_t_p,
+]
+_lib.findblks.restype = None
+
+_lib.partitA.argtypes = [
+    c_size_t_p, c_size_t_p, c_size_t_p, c_size_t_p,
+    ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t, c_ubyte_p, c_size_t_p,
+]
+_lib.partitA.restype = None
+
+_lib.adendotd.argtypes = [
+    JcIr, JcIr, JcIr, c_double_p, c_double_p, c_size_t_p, c_size_t_p,
+    c_size_t_p, ctypes.c_size_t, ctypes.c_size_t, c_double_p,
+]
+_lib.adendotd.restype = None
+
+_lib.adenscale.argtypes = [
+    c_double_p, c_double_p, c_size_t_p, c_size_t_p, c_size_t_p,
+    ctypes.c_size_t, ctypes.c_size_t,
+]
+_lib.adenscale.restype = None
+
+
+def extractA(At, Ajc_table, blk0: int, blk1, blkstart):
+    """Apart = extractA(At, Ajc, blk0, blk1, blkstart): fast row-range
+    slice of a sparse matrix At (m columns, transposed convention as
+    SeDuMi uses throughout), restricted per-column to the nonzero range
+    Ajc_table[:, blk0-1] .. Ajc_table[:, blk1-1] (1-indexed block
+    columns; blk0<=0 means "from the start of the column", blk1 empty/
+    None means "to the end"). blkstart = (ifirst, n) 1-indexed row range
+    (MATLAB's 2-element blkstart form, not the 6-arg blkstart2 form).
+    Wraps extractA() (extractA.c) directly."""
+    import numpy as np
+    import scipy.sparse
+
+    A = At.tocsc()
+    m = A.shape[1]
+    ifirst, n_end = int(blkstart[0]), int(blkstart[1])
+    ifirst -= 1
+    n = n_end - (ifirst + 1)
+
+    Ajc_table = None if Ajc_table is None else np.ascontiguousarray(Ajc_table, dtype=np.int64)
+    njc = 0 if Ajc_table is None else Ajc_table.shape[1]
+
+    Ajc = np.zeros(2 * m, dtype=np.uintp)
+    if blk0 <= 0 or Ajc_table is None:
+        Ajc[:m] = A.indptr[:m]
+    else:
+        Ajc[:m] = Ajc_table[:, blk0 - 1]
+    if blk1 is None or (njc and blk1 - 1 >= njc):
+        Ajc[m:] = A.indptr[1:]
+    else:
+        Ajc[m:] = Ajc_table[:, blk1 - 1]
+
+    ynnz = int(np.sum(Ajc[m:].astype(np.int64) - Ajc[:m].astype(np.int64)))
+    Y_jc = np.zeros(m + 1, dtype=np.uintp)
+    Y_ir = np.zeros(max(ynnz, 1), dtype=np.uintp)
+    Y_pr = np.zeros(max(ynnz, 1), dtype=np.float64)
+
+    Air = np.ascontiguousarray(A.indices, dtype=np.uintp)
+    Apr = np.ascontiguousarray(A.data, dtype=np.float64)
+    Y = JcIr(pr=Y_pr.ctypes.data_as(c_double_p), jc=Y_jc.ctypes.data_as(c_size_t_p),
+             ir=Y_ir.ctypes.data_as(c_size_t_p))
+
+    _lib.extractA(
+        Y, Ajc[:m].ctypes.data_as(c_size_t_p), Ajc[m:].ctypes.data_as(c_size_t_p),
+        Air.ctypes.data_as(c_size_t_p), Apr.ctypes.data_as(c_double_p), ifirst, m,
+    )
+    return scipy.sparse.csc_matrix((Y_pr, Y_ir.astype(np.int64), Y_jc.astype(np.int64)), shape=(n, m))
+
+
+def findblks(At, Ablkjc_table, blk0: int, blk1, blkstart):
+    """Ablk = findblks(At, Ablkjc, blk0, blk1, blkstart): sparse nblk x m
+    0/1 indicator of which of the nblk row-ranges (given by 1-indexed
+    blkstart, length nblk+1) each column of At has a nonzero in (within
+    the blk0..blk1 restricted nnz range, same convention as extractA()).
+    Wraps findblks() (findblks.c) directly."""
+    import numpy as np
+    import scipy.sparse
+
+    A = At.tocsc()
+    m = A.shape[1]
+    # findblks.c's mexFunction decrements each blkstart(i) TWICE (asserting
+    # positivity after each): blkstart[i] = blkstartPr[i]-1, and separately
+    # blkstart[nblk+i] = blkstartPr[i]-2 -- the SAME source value both
+    # times, not the next boundary. (blkstart here therefore needs every
+    # entry >= 2 in 1-indexed terms; a leading boundary of 1 fails the
+    # real MEX build's own assertion, not just this port.)
+    blkstart_arr = np.ascontiguousarray(blkstart, dtype=np.int64)
+    nblk = blkstart_arr.size - 1
+    blkstart0 = np.zeros(2 * nblk, dtype=np.uintp)
+    blkstart0[:nblk] = blkstart_arr[:nblk] - 1
+    blkstart0[nblk:] = blkstart_arr[:nblk] - 2
+
+    Ablkjc_table = None if Ablkjc_table is None else np.ascontiguousarray(Ablkjc_table, dtype=np.int64)
+    njc = 0 if Ablkjc_table is None else Ablkjc_table.shape[1]
+
+    Ajc = np.zeros(2 * m, dtype=np.uintp)
+    if blk0 <= 0 or Ablkjc_table is None:
+        Ajc[:m] = A.indptr[:m]
+    else:
+        Ajc[:m] = Ablkjc_table[:, blk0 - 1]
+    if blk1 is None or (njc and blk1 - 1 >= njc):
+        Ajc[m:] = A.indptr[1:]
+    else:
+        Ajc[m:] = Ablkjc_table[:, blk1 - 1]
+
+    blknnz = max(int(np.sum(Ajc[m:].astype(np.int64) - Ajc[:m].astype(np.int64))), 1)
+    Ablk_jc = np.zeros(m + 1, dtype=np.uintp)
+    Ablk_ir = np.zeros(blknnz, dtype=np.uintp)
+    iwsize = nblk + 2 + int(np.floor(np.log(1.0 + nblk) / np.log(2.0)))
+    iwork = np.zeros(max(iwsize, 1), dtype=np.uintp)
+    cwork = np.zeros(max(nblk, 1), dtype=np.uint8)
+    Air = np.ascontiguousarray(A.indices, dtype=np.uintp)
+
+    _lib.findblks(
+        Ablk_ir.ctypes.data_as(c_size_t_p), Ablk_jc.ctypes.data_as(c_size_t_p),
+        Ajc[:m].ctypes.data_as(c_size_t_p), Ajc[m:].ctypes.data_as(c_size_t_p),
+        Air.ctypes.data_as(c_size_t_p),
+        blkstart0[:nblk].ctypes.data_as(c_size_t_p), blkstart0[nblk:].ctypes.data_as(c_size_t_p),
+        m, nblk, iwsize, cwork.ctypes.data_as(c_ubyte_p), iwork.ctypes.data_as(c_size_t_p),
+    )
+    nnz_final = int(Ablk_jc[m])
+    data = np.ones(max(nnz_final, 1), dtype=np.float64)[:nnz_final]
+    return scipy.sparse.csc_matrix(
+        (data, Ablk_ir[:nnz_final].astype(np.int64), Ablk_jc.astype(np.int64)), shape=(nblk, m)
+    )
+
+
+def partitA(At, blkstart):
+    """Ablkjc = partitA(At, blkstart): m x nblk table where column k
+    gives, for each column j of At, the first nonzero-row subscript at
+    or beyond blkstart[k] (1-indexed blkstart, length nblk). This is
+    exactly the "Ajc table" extractA()/findblks() take as their
+    Ajc_table/Ablkjc_table argument. Wraps partitA() (partitA.c)
+    directly."""
+    import numpy as np
+
+    A = At.tocsc()
+    m = A.shape[1]
+    blkstart_arr = (np.ascontiguousarray(blkstart, dtype=np.int64) - 1).astype(np.uintp)
+    nblk = blkstart_arr.size
+    L = nblk + 2
+
+    iwsize = max(int(np.floor(np.log(1.0 + nblk) / np.log(2.0))), 0)
+    iwork = np.zeros(max(iwsize, 1), dtype=np.uintp)
+    Ablkjc_work = np.zeros(L * m, dtype=np.uintp)
+    cwork = np.zeros(max(nblk, 1), dtype=np.uint8)
+    Ajc = np.ascontiguousarray(A.indptr, dtype=np.uintp)
+    Air = np.ascontiguousarray(A.indices, dtype=np.uintp)
+
+    _lib.partitA(
+        Ablkjc_work.ctypes.data_as(c_size_t_p), Ajc.ctypes.data_as(c_size_t_p),
+        Air.ctypes.data_as(c_size_t_p), blkstart_arr.ctypes.data_as(c_size_t_p),
+        m, nblk, iwsize, cwork.ctypes.data_as(c_ubyte_p), iwork.ctypes.data_as(c_size_t_p),
+    )
+    out = np.empty((m, nblk), dtype=np.int64)
+    Ablkjc_work_r = Ablkjc_work.reshape(m, L)
+    out[:, :] = Ablkjc_work_r[:, 1 : nblk + 1].astype(np.int64)
+    return out
+
+
 def cone_from_dict(K: dict) -> ConeK:
     """Build a ConeK from a plain dict shaped like SeDuMi's K struct, e.g.
     {"f": 2, "l": 3, "q": [4], "s": [2, 3]}. Mirrors what conepars() does
