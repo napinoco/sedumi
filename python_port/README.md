@@ -4,6 +4,13 @@ This directory holds the in-progress port of SeDuMi to a standalone
 C library + Python (NumPy/SciPy) package, with no MATLAB or GNU Octave
 runtime dependency.
 
+**New contributor?** Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first —
+it has the current phase-by-phase status, the porting workflow this
+project follows, known scope limitations, and the prioritized list of
+remaining work. (It's in Japanese; ask if you'd like an English
+translation.) The summary below is kept only for a quick orientation
+and may lag behind CONTRIBUTING.md.
+
 See the phase plan tracked in the project task list:
 
 - **Phase 0** — Verification baseline (this directory's `tools/generate_golden.m`
