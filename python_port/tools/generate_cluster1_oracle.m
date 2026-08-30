@@ -53,4 +53,17 @@ yqa = [2.0; 1.5; 100.25];
 [zhi, zlo] = quadadd(xhi, xlo, yqa);
 save('-v7', fullfile(out_dir, 'quadadd.mat'), 'xhi', 'xlo', 'yqa', 'zhi', 'zlo');
 
+%% ddot: X given as a FULL, absolute-indexed array (blkstart(1) > 1), not
+%% pre-sliced to the block span -- exercises the mexFunction's own
+%% `X.pr += blkstart[0]` row-offset case (ddotxj() itself asserts
+%% blkstart[0]==0 and never applies this offset itself). Appended at the
+%% end (rather than alongside the other ddot test above) so it doesn't
+%% shift the shared 'rand' stream and change the other, pre-existing
+%% fixtures' random data.
+d2 = rand(6,1);
+X2 = rand(10,4);           % 4 extra rows before the block-span starts
+blkstart2 = [5;7;11];      % blocks span absolute rows 5-6, 7-10 (1-indexed)
+ddotX2 = ddot(d2, X2, blkstart2);
+save('-v7', fullfile(out_dir, 'ddot_offset.mat'), 'd2', 'X2', 'blkstart2', 'ddotX2');
+
 fprintf('Cluster 1 oracle written to %s\n', out_dir);

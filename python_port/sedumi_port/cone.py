@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import _native
+
 
 def vec(X):
     """x = vec(X): column-major flatten, matching MATLAB's reshape(X,
@@ -282,3 +284,396 @@ def eyeK(K: dict):
             x[xi : xi + qi : ki + 1] = 1.0
             xi += qi
     return x
+
+
+def psdeig(x, K: dict, want_vectors: bool = False):
+    """[lab,q] = psdeig(x,K): spectral coefficients (and, optionally, the
+    eigenbasis q) of the PSD part of x -- like eigK's own PSD-block
+    handling, but PSD-only, and can also return the eigenvectors. `q`'s
+    eigenvector signs/phases are not unique (LAPACK's zheev/dsyev may
+    pick different ones than MATLAB's eig for degenerate or nearly-
+    degenerate eigenvalues), so it is not compared element-wise against
+    the Octave oracle -- only its defining property (X = q*diag(2*lab)*q')
+    is checked.
+
+    Only the last N = sum(Ks^2) + sum(Ks[rsdpN:]^2) entries of x are used
+    (xi = len(x) - N), matching psdeig.m's own indexing -- x may be a
+    bare PSD-only vector or a full L+Q+S vector.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return (np.zeros(0), np.zeros(0)) if want_vectors else np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = sum(Kq) + sum(Kq[nr:])
+    xi = x.size - N
+    lab = np.zeros(sum(s_sizes), dtype=np.float64)
+    ei = 0
+    if want_vectors:
+        q = np.zeros(N, dtype=np.float64)
+        vi = 0
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        XX = x[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        XX = XX + XX.conj().T
+        if want_vectors:
+            DD, QQ = np.linalg.eigh(XX)
+        else:
+            DD = np.linalg.eigvalsh(XX)
+        lab[ei : ei + ki] = 0.5 * DD
+        ei += ki
+        if want_vectors:
+            q[vi : vi + qi] = np.real(QQ).reshape(-1, order="F")
+            vi += qi
+            if i >= nr:
+                q[vi : vi + qi] = np.imag(QQ).reshape(-1, order="F")
+                vi += qi
+    return (lab, q) if want_vectors else lab
+
+
+def psdfactor(x, K: dict):
+    """[ux,ispos] = psdfactor(x,K): per-PSD-block lower Cholesky factor
+    UX'*UX = X, mirrored into a full (non-triangular-looking) array via
+    UX + tril(UX,-1)' -- callers (psdscale/psdinvscale) re-extract the
+    triangular part they need themselves, so the mirrored upper part is
+    dead weight kept only for byte-for-byte fidelity to psdfactor.m.
+    Returns ispos=False (and a partial/garbage ux) the moment any block
+    fails to be positive definite, exactly like the real chol()-based
+    early return.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0), True
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = sum(Kq) + sum(Kq[nr:])
+    ux = np.zeros(N, dtype=np.float64)
+    xi = x.size - N
+    ui = 0
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        XX = x[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        try:
+            L = np.linalg.cholesky(XX)
+        except np.linalg.LinAlgError:
+            return ux, False
+        L = L + np.tril(L, -1).conj().T
+        ux[ui : ui + qi] = np.real(L).reshape(-1, order="F")
+        ui += qi
+        if i >= nr:
+            ux[ui : ui + qi] = np.imag(L).reshape(-1, order="F")
+            ui += qi
+    return ux, True
+
+
+def _solve_ud_sandwich(TT, XX):
+    """inv(TT) @ XX @ inv(TT'), computed via two triangular-agnostic
+    solves (as MATLAB's `TT \\ (XX / TT')` does) rather than explicit
+    inverses."""
+    A = np.linalg.solve(TT, XX)
+    return np.linalg.solve(TT.conj(), A.T).T
+
+
+def psdinvscale(ud, x, K: dict):
+    """y = psdinvscale(ud,x,K): y = D(d^-1) x = Ud' \\ X / Ud per PSD
+    block, with Ud = triu(reshape(ud[block])) (upper-triangular part
+    only, matching psdinvscale.m)."""
+    ud = np.asarray(ud, dtype=np.float64).ravel(order="F")
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = sum(Kq) + sum(Kq[nr:])
+    y = np.zeros(N, dtype=np.float64)
+    xi = x.size - N
+    yi = 0
+    ui = 0
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        TT = ud[ui : ui + qi].copy()
+        ui += qi
+        if i >= nr:
+            TT = TT + 1j * ud[ui : ui + qi]
+            ui += qi
+        TT = np.triu(TT.reshape(ki, ki, order="F"))
+        XX = x[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        XX = _solve_ud_sandwich(TT, XX)
+        y[yi : yi + qi] = np.real(XX).reshape(-1, order="F")
+        yi += qi
+        if i >= nr:
+            imag = np.imag(XX)
+            np.fill_diagonal(imag, 0.0)  # needed, otherwise psdfactor() will sometimes fail
+            y[yi : yi + qi] = imag.reshape(-1, order="F")
+            yi += qi
+    return y
+
+
+def psdjmul(x, y, K: dict):
+    """z = psdjmul(x,y,K): (XY+YX)/2 per PSD block. Uses K['N'] and
+    K['sblkstart'][0] (not sum(Ks^2) like psdeig/psdfactor/psdscale) to
+    size its output, matching psdjmul.m exactly."""
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    y = np.asarray(y, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = int(K["N"]) - int(np.asarray(K["sblkstart"]).ravel()[0]) + 1
+    z = np.zeros(N, dtype=np.float64)
+    xi = x.size - N
+    zi = 0
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        XX = x[xi : xi + qi].copy()
+        YY = y[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            YY = YY + 1j * y[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        YY = YY.reshape(ki, ki, order="F")
+        ZZ = XX @ YY
+        ZZ = 0.5 * (ZZ + ZZ.conj().T)
+        z[zi : zi + qi] = np.real(ZZ).reshape(-1, order="F")
+        zi += qi
+        if i >= nr:
+            z[zi : zi + qi] = np.imag(ZZ).reshape(-1, order="F")
+            zi += qi
+    return z
+
+
+def triumtriu(x, y, K: dict):
+    """z = triumtriu(x,y,K): z = x*y for upper-triangular x,y (per PSD
+    block), Hermitianized via the strict-upper mirror -- since the
+    product of two upper-triangular matrices is itself upper-triangular,
+    this just fills in the (all-zero) strict lower part."""
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    y = np.asarray(y, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = int(K["N"]) - int(np.asarray(K["sblkstart"]).ravel()[0]) + 1
+    z = np.zeros(N, dtype=np.float64)
+    xi = x.size - N
+    zi = 0
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        XX = x[xi : xi + qi].copy()
+        YY = y[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            YY = YY + 1j * y[xi : xi + qi]
+            xi += qi
+        XX = np.triu(XX.reshape(ki, ki, order="F"))
+        YY = np.triu(YY.reshape(ki, ki, order="F"))
+        ZZ = XX @ YY
+        ZZ = ZZ + np.triu(ZZ, 1).conj().T
+        z[zi : zi + qi] = np.real(ZZ).reshape(-1, order="F")
+        zi += qi
+        if i >= nr:
+            z[zi : zi + qi] = np.imag(ZZ).reshape(-1, order="F")
+            zi += qi
+    return z
+
+
+def psdscale(ud, x, K: dict, transp: bool = False):
+    """y = psdscale(ud,x,K,transp): y[k] = vec(Ldk' Xk Ldk) (transp=False)
+    or vec(Udk' Xk Udk) (transp=True), with Ld=tril(reshape(ud[block])),
+    Ud=triu(reshape(ud[block])). `ud` may be a plain vector, or a dict
+    {"u": ..., "perm": ...} to apply a per-block pivot ordering (perm's
+    entries are LOCAL 1-indexed positions within each block, ki at a
+    time -- not global indices into the sum(K.s)-length array)."""
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    N = sum(Kq) + sum(Kq[nr:])
+    y = np.zeros(N, dtype=np.float64)
+    xi = x.size - N
+    yi = 0
+    ui = 0
+
+    if isinstance(ud, dict):
+        perm = np.asarray(ud.get("perm", [])).ravel()
+        if perm.size == 0:
+            prep = postp = False
+        else:
+            prep = not transp
+            postp = bool(transp)
+            pi = 0
+        ud_vec = np.asarray(ud["u"], dtype=np.float64).ravel(order="F")
+    else:
+        prep = postp = False
+        ud_vec = np.asarray(ud, dtype=np.float64).ravel(order="F")
+
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        TT = ud_vec[ui : ui + qi].copy()
+        ui += qi
+        if i >= nr:
+            TT = TT + 1j * ud_vec[ui : ui + qi]
+            ui += qi
+        TT = TT.reshape(ki, ki, order="F")
+        TT = np.triu(TT) if transp else np.tril(TT)
+        XX = x[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        if prep:
+            PP = perm[pi : pi + ki].astype(np.int64) - 1
+            pi += ki
+            if np.any(np.diff(PP) != 1):
+                XX = XX[np.ix_(PP, PP)]
+        XX = TT.conj().T @ XX @ TT
+        if postp:
+            PP = perm[pi : pi + ki].astype(np.int64) - 1
+            pi += ki
+            if np.any(np.diff(PP) != 1):
+                out = np.zeros_like(XX)
+                out[np.ix_(PP, PP)] = XX
+                XX = out
+        y[yi : yi + qi] = np.real(XX).reshape(-1, order="F")
+        yi += qi
+        if i >= nr:
+            imag = np.imag(XX)
+            np.fill_diagonal(imag, 0.0)  # needed, otherwise psdfactor() will sometimes fail
+            y[yi : yi + qi] = imag.reshape(-1, order="F")
+            yi += qi
+    return y
+
+
+def qframeit(lab, frmq, K: dict):
+    """x = qframeit(lab,frmq,K): reconstructs the Lorentz "vector" part
+    of x from spectral values lab and frame direction frmq.
+
+    IMPORTANT: `lab` here uses a *grouped* layout ([.., lo_1..lo_lorN,
+    hi_1..hi_lorN, ..]), NOT eigK()'s own *interleaved* per-block layout
+    ([.., lo_1,hi_1,lo_2,hi_2, ..]) -- confirmed against the real Octave
+    build (see generate_cone2_oracle.m's docstring). This grouped layout
+    is what trydif.m/widelen.m actually build (`w.lab = [...; detxz./
+    lab2q; lab2q; ...]`) and is what updtransfo.m feeds into vfrm.lab,
+    which is what sedumi.m's own iteration loop passes to frameit/
+    qframeit -- so this is the layout to match, not eigK's.
+    """
+    lab = np.asarray(lab, dtype=np.float64).ravel(order="F")
+    frmq = np.asarray(frmq, dtype=np.float64).ravel(order="F")
+    lorN = len(K.get("q", []))
+    if lab.size > 2 * lorN:
+        l = int(K.get("l", 0))
+        lab = lab[l : l + 2 * lorN]
+    lo = lab[:lorN]
+    hi = lab[lorN:]
+    x_lo = (lo + hi) / np.sqrt(2.0)
+    x_vec = _native.qblkmul(hi - lo, frmq, K["qblkstart"])
+    return np.concatenate([x_lo, x_vec])
+
+
+def qjmul(x, y, K: dict):
+    """z = qjmul(x,y,K): Jordan product (x*y)/sqrt(2) for Lorentz cones.
+    x,y are full internal-format vectors (K.mainblks-indexed), unless
+    shorter than K['lq'], in which case they're treated as starting
+    right at the Lorentz part (mainblks shifted so ix[0] becomes 1)."""
+    q_sizes = K.get("q", [])
+    if len(q_sizes) == 0:
+        return np.zeros(0)
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    y = np.asarray(y, dtype=np.float64).ravel(order="F")
+    if x.size != y.size:
+        raise ValueError("x,y size mismatch")
+    ix = np.asarray(K["mainblks"], dtype=np.int64).ravel().copy()
+    if x.size < int(K["lq"]):
+        ix = ix + (1 - ix[0])
+    i1, i2, i3 = int(ix[0]), int(ix[1]), int(ix[2])
+    z1 = x[i1 - 1 : i2 - 1] * y[i1 - 1 : i2 - 1] + _native.ddot(
+        x[i2 - 1 : i3 - 1], y, K["qblkstart"]
+    )
+    z_rest = _native.qblkmul(x[i1 - 1 : i2 - 1], y, K["qblkstart"]) + _native.qblkmul(
+        y[i1 - 1 : i2 - 1], x, K["qblkstart"]
+    )
+    return np.concatenate([z1, z_rest]) / np.sqrt(2.0)
+
+
+def qinvjmul(labx, frmx, b, K: dict):
+    """y = qinvjmul(labx,frmx,b,K): inverse Jordan multiply for Lorentz
+    blocks. `labx` uses the same grouped layout as qframeit's `lab` (see
+    its docstring), not eigK()'s interleaved one."""
+    lorN = len(K.get("q", []))
+    if lorN == 0:
+        return np.zeros(0)
+    labx = np.asarray(labx, dtype=np.float64).ravel(order="F")
+    b = np.asarray(b, dtype=np.float64).ravel(order="F")
+    if labx.size > 2 * lorN:
+        l = int(K.get("l", 0))
+        labx = labx[l : l + 2 * lorN]
+    detx = labx[:lorN] * labx[lorN:]
+    x = qframeit(labx, frmx, K)
+    ix = np.asarray(K["mainblks"], dtype=np.int64).ravel().copy()
+    if b.size == ix[2] - ix[0]:  # Lorentz only?
+        ix = ix + (1 - ix[0])
+    i1, i2 = int(ix[0]), int(ix[1])
+    y1 = x[:lorN] * b[i1 - 1 : i2 - 1] - _native.ddot(x[lorN:], b, K["qblkstart"])
+    y1 = y1 / (np.sqrt(2.0) * detx)
+    y_rest = _native.qblkmul(np.sqrt(2.0) / x[:lorN], b, K["qblkstart"]) - _native.qblkmul(
+        y1 / x[:lorN], x[lorN:], K["qblkstart"]
+    )
+    return np.concatenate([y1, y_rest])
+
+
+def frameit(lab, frmq, frms, K: dict):
+    """x = frameit(lab,frmq,frms,K): x = [lab(L-part); qframeit(...);
+    psdframeit(...)] -- a pure concatenation, `lab` in the same grouped
+    layout qframeit/qinvjmul use (see qframeit's docstring).
+
+    Unlike psdframeit.c's own mexFunction (which accepts either a
+    PSD-only lab or a full lab and slices off the L+Lorentz prefix
+    itself), _native.psdframeit()'s Python wrapper expects an exact
+    PSD-only lab -- so that slicing is done here instead, matching
+    frameit.m's actual full-lab call.
+    """
+    lab = np.asarray(lab, dtype=np.float64).ravel(order="F")
+    l = int(K.get("l", 0))
+    psd_len = sum(int(v) for v in K.get("s", []))
+    lab_psd = lab if lab.size == psd_len else lab[lab.size - psd_len :]
+    return np.concatenate(
+        [lab[:l], qframeit(lab, frmq, K), _native.psdframeit(lab_psd, frms, K)]
+    )

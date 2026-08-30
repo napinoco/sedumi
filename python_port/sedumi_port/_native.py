@@ -671,6 +671,14 @@ def ddot(d, X, blkstart):
     Wraps ddotxj() directly (no MATLAB/Octave/MEX); the sparse-X path
     (spddotxj) is not yet wrapped -- Phase 3 will add it if/when the .m
     port actually needs ddot on sparse X.
+
+    `blkstart` is the real, absolute (possibly >1) 1-indexed .m/MEX-style
+    array; `X` (like `d`) may be given either as the exact qDim-row block
+    span, or as a full, absolute-indexed array -- ddot.c's own
+    mexFunction (not just its ddotxj() core) applies a row offset in the
+    latter case, so this wrapper replicates that same case analysis
+    (nrows==qDim / nrows==nblk+qDim / general nrows>=blkstart[-1]) rather
+    than just handling the qDim-exact case ddotxj() itself assumes.
     """
     import numpy as np
 
@@ -678,20 +686,33 @@ def ddot(d, X, blkstart):
     X = np.ascontiguousarray(X, dtype=np.float64)
     if X.ndim == 1:
         X = X.reshape(-1, 1)
-    blkstart = np.ascontiguousarray(blkstart, dtype=np.uintp)
+    blkstart = np.ascontiguousarray(blkstart, dtype=np.int64)
     nblk = blkstart.size - 1
     nrows, ncols = X.shape
 
-    qDim = blkstart[-1] - blkstart[0]
+    qDim = int(blkstart[-1] - blkstart[0])
     if d.size != qDim:
         d = d[int(blkstart[0]) :]
+
+    # 0-indexed absolute positions -- mirrors the mexFunction's own
+    # `blkstart[i] = (mwIndex)blkstartPr[i] - 1` conversion; the row-offset
+    # comparisons below are against these, not the raw 1-indexed values.
+    blkstart0 = blkstart - 1
+    row_off = 0
+    if nrows != qDim:
+        if nrows < int(blkstart0[-1]):
+            if nrows != nblk + qDim:
+                raise ValueError("ddot: X size mismatch")
+            row_off = nblk  # Lorentz trace + norm-bound layout
+        else:
+            row_off = int(blkstart0[0])  # X is the full, absolute-indexed array
 
     out = np.empty((nblk, ncols), dtype=np.float64, order="F")
     bs = (blkstart - blkstart[0]).astype(np.uintp)  # ddotxj asserts blkstart[0]==0
     dptr = d.ctypes.data_as(c_double_p)
     bsptr = bs.ctypes.data_as(c_size_t_p)
     for j in range(ncols):
-        col = np.ascontiguousarray(X[:, j])
+        col = np.ascontiguousarray(X[row_off:, j])
         _lib.ddotxj(
             out[:, j].ctypes.data_as(c_double_p), dptr,
             col.ctypes.data_as(c_double_p), bsptr, nblk,

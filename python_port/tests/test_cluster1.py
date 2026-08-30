@@ -34,6 +34,20 @@ def test_ddot_dense_matches_octave_mex():
     np.testing.assert_allclose(got, expected, rtol=1e-12)
 
 
+def test_ddot_dense_offset_matches_octave_mex():
+    """Regression test for a real gap found while porting qjmul.m/Phase
+    3-b: ddot.c's own mexFunction (not just its ddotxj() core, which
+    ddot() wraps directly) applies a row offset when X is given as a
+    full, absolute-indexed array (blkstart[0] > 1) rather than pre-sliced
+    to the block span -- ddot() didn't replicate that offset before this
+    fixture was added, so it silently read from the wrong rows of X
+    whenever blkstart didn't start at 1 (not exercised by
+    test_ddot_dense_matches_octave_mex's blkstart=[1;3;7])."""
+    data = scipy.io.loadmat(FIXTURE_DIR / "ddot_offset.mat")
+    got = _native.ddot(data["d2"].ravel(), data["X2"], data["blkstart2"].ravel())
+    np.testing.assert_allclose(got, data["ddotX2"], rtol=1e-12)
+
+
 def test_qblkmul_matches_octave_mex():
     data = scipy.io.loadmat(FIXTURE_DIR / "qblkmul.mat")
     got = _native.qblkmul(
