@@ -795,6 +795,221 @@ def quadadd(xhi, xlo, y):
     return zhi, zlo
 
 
+class KeyDouble(ctypes.Structure):
+    """Mirrors blksdp.h's `keydouble` (double r; mwIndex k;)."""
+
+    _fields_ = [("r", ctypes.c_double), ("k", ctypes.c_size_t)]
+
+
+c_ubyte_p = ctypes.POINTER(ctypes.c_ubyte)  # for `char*`/`bool*` buffers --
+# deliberately not ctypes.c_char_p, which has Python-string marshaling
+# semantics that are the wrong fit for a plain output byte buffer.
+
+_lib.fwprodform.argtypes = [
+    c_double_p, c_size_t_p, c_size_t_p, c_double_p, c_double_p, c_size_t_p,
+    c_ubyte_p, ctypes.c_size_t,
+]
+_lib.fwprodform.restype = None
+
+_lib.bwprodform.argtypes = [
+    c_double_p, c_size_t_p, c_size_t_p, c_double_p, c_double_p, c_size_t_p,
+    c_ubyte_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t,
+]
+_lib.bwprodform.restype = None
+
+_lib.prodformfact.argtypes = [
+    c_double_p, c_size_t_p, c_double_p, c_size_t_p,
+    c_double_p, c_ubyte_p, c_size_t_p,
+    c_size_t_p, c_size_t_p,
+    c_double_p, ctypes.c_size_t, c_size_t_p, c_size_t_p,
+    ctypes.c_double, c_double_p, ctypes.POINTER(KeyDouble),
+]
+_lib.prodformfact.restype = None
+
+
+def _dpr1_apply(direction, Lden: dict, b):
+    """Shared implementation for fwdpr1()/bwdpr1(): PROD_k L(pk,betak) *
+    ynew = yold (forward) or PROD_k L(pk,betak)' * ynew = yold (backward),
+    where L(p,beta) = eye(m) + tril(p*beta',-1). Wraps fwprodform/
+    bwprodform (fwdpr1.c/bwdpr1.c) directly.
+
+    Lden needs "betajc" (1-indexed, length nden+1; nden==0 means no dense
+    columns at all -- y is returned unchanged, exactly like the MEX
+    build's early return), "p", "beta", "pivperm", "dopiv", and "dz" (a
+    sparse matrix whose .indptr is used as the per-column cumulative
+    "reach" xsuper and whose .indices give the row-compaction mapping --
+    see dpr1fact()'s docstring for what this "dz" scheme actually means).
+    """
+    import numpy as np
+
+    betajc_1indexed = np.ascontiguousarray(Lden["betajc"], dtype=np.int64).ravel()
+    nden = betajc_1indexed.size - 1
+    b = np.ascontiguousarray(b, dtype=np.float64)
+    if nden == 0:
+        return b.copy()
+
+    single_col = b.ndim == 1
+    B = b.reshape(-1, 1) if single_col else b
+    m = B.shape[0]
+
+    betajc = (betajc_1indexed - 1).astype(np.uintp)
+    p = np.ascontiguousarray(Lden["p"], dtype=np.float64)
+    beta = np.ascontiguousarray(Lden["beta"], dtype=np.float64)
+    ordered = np.ascontiguousarray(Lden["dopiv"], dtype=np.uint8).ravel()
+    # pivperm is an opaque, internal 0-indexed array private to the
+    # dpr1fact()<->fwdpr1()/bwdpr1() pairing -- never interpreted as a
+    # MATLAB-facing 1-indexed permutation anywhere, including by the
+    # original C mexFunctions (they round-trip it unchanged), so no
+    # +-1 conversion happens here either.
+    pivperm = np.ascontiguousarray(Lden["pivperm"], dtype=np.uintp).ravel()
+    dz_jc = np.ascontiguousarray(Lden["dz"].indptr, dtype=np.uintp)
+    dz_ir = np.ascontiguousarray(Lden["dz"].indices, dtype=np.uintp)
+    dznnz = int(dz_jc[nden])
+
+    Y = B.copy()
+    fwork = np.empty(max(dznnz, 1), dtype=np.float64)
+    for j in range(Y.shape[1]):
+        col = Y[:, j]
+        for i in range(dznnz):
+            fwork[i] = col[dz_ir[i]]
+        if direction == "fw":
+            _lib.fwprodform(
+                fwork.ctypes.data_as(c_double_p), dz_jc.ctypes.data_as(c_size_t_p),
+                pivperm.ctypes.data_as(c_size_t_p), p.ctypes.data_as(c_double_p),
+                beta.ctypes.data_as(c_double_p), betajc.ctypes.data_as(c_size_t_p),
+                ordered.ctypes.data_as(c_ubyte_p), nden,
+            )
+        else:
+            # bwprodform additionally needs the *total* lengths of p and
+            # pivperm up front (it walks backward, decrementing into
+            # them), unlike fwprodform which only needs cumulative
+            # offsets it can derive from dz_jc as it goes forward.
+            _lib.bwprodform(
+                fwork.ctypes.data_as(c_double_p), dz_jc.ctypes.data_as(c_size_t_p),
+                pivperm.ctypes.data_as(c_size_t_p), p.ctypes.data_as(c_double_p),
+                beta.ctypes.data_as(c_double_p), betajc.ctypes.data_as(c_size_t_p),
+                ordered.ctypes.data_as(c_ubyte_p), nden, p.size, pivperm.size,
+            )
+        for i in range(dznnz):
+            col[dz_ir[i]] = fwork[i]
+    return Y[:, 0] if single_col else Y
+
+
+def fwdpr1(Lden: dict, b):
+    """y = fwdpr1(Lden, b): solve PROD_k L(pk,betak) * y = b. See
+    _dpr1_apply()'s docstring for Lden's fields."""
+    return _dpr1_apply("fw", Lden, b)
+
+
+def bwdpr1(Lden: dict, b):
+    """y = bwdpr1(Lden, b): solve PROD_k L(pk,betak)' * y = b. See
+    _dpr1_apply()'s docstring for Lden's fields."""
+    return _dpr1_apply("bw", Lden, b)
+
+
+def dpr1fact(x, d, Lsym: dict, smult, maxu: float):
+    """[Lden, d_out] = dpr1fact(x, d, Lsym, smult, maxu): factors
+    diag(d) + x*diag(smult)*x' = (PROD_k L(pk,betak)) * diag(d_out) *
+    (PROD_k L(pk,betak))', wrapping prodformfact() (dpr1fact.c) directly
+    -- the same C computation the MEX build uses for SeDuMi's
+    "dense column" handling in the PCG preconditioner.
+
+    x : scipy.sparse.csc_matrix, m x n (n = number of dense columns).
+    d : length-m array, diagonal to update.
+    Lsym : dict with "dz" (scipy.sparse.csc_matrix -- see below), "perm"
+        (1-indexed length-n column order, as symfctmex-style outputs
+        use), "first" (1-indexed length-n array).
+    smult : length-n array of per-column multipliers (x*diag(smult)*x').
+    maxu : stability threshold -- a column gets pivoted (reordered) if a
+        pivot magnitude ratio would otherwise exceed this.
+
+    Returns a dict shaped like Lden (see _dpr1_apply()'s docstring) plus
+    the updated diagonal, ready to feed to fwdpr1()/bwdpr1() after also
+    copying over Lsym's dz/perm/first fields (as deninfac.m does):
+        Lden["dz"], Lden["first"], Lden["perm"] = Lsym["dz"], Lsym["first"], Lsym["perm"]
+    """
+    import numpy as np
+    import scipy.sparse
+
+    X = x.tocsc()
+    m, n = X.shape
+    dz = Lsym["dz"].tocsc()
+    dz_jc = np.ascontiguousarray(dz.indptr, dtype=np.uintp)
+    dz_ir = np.ascontiguousarray(dz.indices, dtype=np.uintp)
+    dznnz = int(dz_jc[n])
+    if dznnz > m:
+        raise ValueError("Lsym.dz size mismatch: more compact rows than m")
+
+    colperm = (np.ascontiguousarray(Lsym["perm"], dtype=np.int64).ravel() - 1).astype(np.uintp)
+    firstpiv = (np.ascontiguousarray(Lsym["first"], dtype=np.int64).ravel() - 1).astype(np.uintp)
+
+    pnnz = int(sum(int(dz_jc[j + 1]) for j in range(n)))
+    d_compact = np.empty(max(dznnz, 1), dtype=np.float64)
+    lab = np.ascontiguousarray(d, dtype=np.float64).copy()
+    for i in range(dznnz):
+        d_compact[i] = lab[dz_ir[i]]
+
+    dep = np.zeros(dznnz + 1, dtype=np.uintp)
+    ndep = 0
+    for i in range(dznnz):
+        if d_compact[i] <= 0.0:
+            dep[ndep] = i
+            ndep += 1
+    dep[ndep] = m
+
+    invrowperm = np.zeros(max(m, 1), dtype=np.uintp)
+    for i in range(dznnz):
+        invrowperm[dz_ir[i]] = i
+
+    p = np.zeros(max(pnnz + m, 1), dtype=np.float64)
+    pos = 0
+    for j in range(n):
+        pos += int(dz_jc[j])
+        permj = int(colperm[j])
+        for i in range(X.indptr[permj], X.indptr[permj + 1]):
+            p[pos + int(invrowperm[X.indices[i]])] = X.data[i]
+
+    p = p[:pnnz].copy() if pnnz > 0 else np.zeros(0, dtype=np.float64)
+    beta = np.zeros(max(pnnz, 1), dtype=np.float64)
+    betajc = np.zeros(n + 1, dtype=np.uintp)
+    ordered = np.zeros(max(n, 1), dtype=np.uint8)
+    pivperm = np.zeros(max(pnnz, 1), dtype=np.uintp)
+    fwork = np.zeros(max(dznnz, 1), dtype=np.float64)
+    kdwork = (KeyDouble * max(dznnz, 1))()
+    ndep_c = ctypes.c_size_t(ndep)
+    smult_arr = np.ascontiguousarray(smult, dtype=np.float64)
+
+    _lib.prodformfact(
+        p.ctypes.data_as(c_double_p), pivperm.ctypes.data_as(c_size_t_p),
+        beta.ctypes.data_as(c_double_p), betajc.ctypes.data_as(c_size_t_p),
+        d_compact.ctypes.data_as(c_double_p), ordered.ctypes.data_as(c_ubyte_p),
+        dz_jc.ctypes.data_as(c_size_t_p),
+        colperm.ctypes.data_as(c_size_t_p), firstpiv.ctypes.data_as(c_size_t_p),
+        smult_arr.ctypes.data_as(c_double_p), n, dep.ctypes.data_as(c_size_t_p),
+        ctypes.byref(ndep_c),
+        maxu, fwork.ctypes.data_as(c_double_p), kdwork,
+    )
+
+    for i in range(dznnz):
+        lab[dz_ir[i]] = d_compact[i]
+
+    # permnnz = sum{dz.jc[j+1] | ordered[j]==1} -- exactly dpr1fact.c's
+    # mexFunction; pivperm[:permnnz] is meaningful, the rest is scratch.
+    permnnz = 0
+    for i in range(n):
+        if ordered[i]:
+            permnnz += int(dz_jc[i + 1])
+
+    Lden = {
+        "betajc": (betajc[: n + 1].astype(np.int64) + 1),  # 1-indexed, .m-facing
+        "beta": beta[: int(betajc[n])].copy(),
+        "p": p,
+        "dopiv": ordered[:n].copy(),
+        "pivperm": pivperm[:permnnz].copy(),  # opaque, see _dpr1_apply()
+    }
+    return Lden, lab
+
+
 def cone_from_dict(K: dict) -> ConeK:
     """Build a ConeK from a plain dict shaped like SeDuMi's K struct, e.g.
     {"f": 2, "l": 3, "q": [4], "s": [2, 3]}. Mirrors what conepars() does
