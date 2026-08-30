@@ -35,7 +35,7 @@
 
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define Y_OUT plhs[0]
@@ -86,6 +86,7 @@ int blkmul(double *y, const double *mu,const double *d,const mwIndex *nL,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -129,3 +130,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
    ------------------------------------------------------------ */
  mxFree(nL);
 }
+#endif /* !SEDUMI_STANDALONE */

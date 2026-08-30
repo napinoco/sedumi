@@ -42,7 +42,7 @@ function Lden = finsymbden(LAD,perm,dz,firstq)
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define LDEN_OUT  plhs[0]
@@ -101,6 +101,7 @@ void getfirstpiv(mwIndex *firstpiv, const mwIndex *invperm, const mwIndex *xsupe
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -212,3 +213,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(firstpiv);
   mxFree(invdz);
 }
+#endif /* !SEDUMI_STANDALONE */

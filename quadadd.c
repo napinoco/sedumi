@@ -38,7 +38,7 @@ function [zhi,zlo] = quadadd(xhi,xlo,y)
 
  */
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include <string.h>
 
@@ -86,6 +86,7 @@ double rquaddadd(double *pzlo, double xhi,double xlo, const double y)
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
                  const int nrhs, const mxArray *prhs[])
 {
@@ -128,3 +129,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

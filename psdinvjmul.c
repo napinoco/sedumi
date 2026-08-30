@@ -39,7 +39,7 @@ function z = psdinvjmul(xlab,xfrm, y, K)
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include "reflect.h"
 
@@ -162,6 +162,7 @@ void psdinvjmul(double *z, const double *frms, const double *x,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -225,3 +226,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   mxFree(sdpNL);
   mxFree(fwork);
 }
+#endif /* !SEDUMI_STANDALONE */

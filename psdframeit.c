@@ -36,7 +36,7 @@
  */
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include "reflect.h"
 
@@ -104,6 +104,7 @@ void psdframeit(double *x, const double *frms, const double *lab,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -166,3 +167,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   mxFree(sdpNL);
   mxFree(fwork);
 }
+#endif /* !SEDUMI_STANDALONE */

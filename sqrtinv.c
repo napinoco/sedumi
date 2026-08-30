@@ -39,7 +39,7 @@ function y = sqrtinv(q,vlab,K)
 */
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "triuaux.h"
 #include "blksdp.h"
 
@@ -92,6 +92,7 @@ void prpiqdivv(double *y,double *ypi, const double *q,const double *qpi,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -143,3 +144,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
     y += nksqr; q += nksqr; v += nk;
   }
 }
+#endif /* !SEDUMI_STANDALONE */

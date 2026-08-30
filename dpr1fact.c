@@ -48,7 +48,7 @@ function [Lden,L.d] = dpr1fact(x, d, Lsym, smult, maxu)
 
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define LDEN_OUT myplhs[0]
@@ -627,6 +627,7 @@ void prodformfact(double *p, mwIndex *perm, double *beta, mwIndex *betajc,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -846,3 +847,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

@@ -37,7 +37,7 @@ function y = givensrot(gjc,g,x,K)
 
 */
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include "givens.h"
 
@@ -90,6 +90,7 @@ void prpimatgivens(double *y,double *ypi, const tridouble *g,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -166,3 +167,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
    ------------------------------------------------------------ */
   mxFree(iwork);
 }
+#endif /* !SEDUMI_STANDALONE */

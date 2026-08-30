@@ -39,7 +39,7 @@
 #define L_IN prhs[0]       /* symbolic Cholesky structure: {L.L, L.xsuper} */
 #define NPARIN 1
 
-#include "mex.h"
+#include "sedumi_platform.h"
 
 /* ************************************************************
    PROCEDURE gettmpsiz - Compute "fwork"-size in PRECORRECT of
@@ -106,6 +106,7 @@ mwIndex gettmpsiz(const mwIndex *ljc,const mwIndex *lir,const mwIndex *xsuper,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -171,3 +172,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(snode);
   mxFree(xsuper);
 }
+#endif /* !SEDUMI_STANDALONE */

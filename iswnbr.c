@@ -40,7 +40,7 @@ function [delta,h,alpha] = iswnbr(vSQR,thetaSQR)
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 
 #define	DELTA_OUT myplhs[0]
 #define	H_OUT myplhs[1]
@@ -218,6 +218,7 @@ double getdelta(double *ph, double *palpha, const double *w,
      Computes proximity "delta" w.r.t cregion C(theta).
      The projection of v onto C(theta) is (1-alpha)*max(h,v).
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
    int nrhs, const mxArray *prhs[])
 {
@@ -266,3 +267,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

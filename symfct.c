@@ -3,7 +3,7 @@
 	-lf2c -lm   (in that order)
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "symfct.h"
 
 #if !defined(max)

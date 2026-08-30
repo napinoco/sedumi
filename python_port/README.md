@@ -13,7 +13,13 @@ See the phase plan tracked in the project task list:
   checked against.
 - **Phase 1** — Strip the `mex.h`/`mxArray` dependency out of the C kernels
   (`blksdp.h` and friends) and build them into a standalone `libsedumi`
-  shared library with a plain C API.
+  shared library with a plain C API. **Done**: every `.c` file in the
+  repository (except the pre-existing dead file `bwblkslv2.c`) now builds
+  with `-DSEDUMI_STANDALONE` and links into a single shared library with
+  zero MATLAB/Octave/MEX dependency -- see `sedumi_platform.h` and
+  `tools/build_libsedumi.sh`. The MEX/Octave build is unchanged and still
+  reproduces the Phase 0 golden reference bit-for-bit
+  (`tools/check_no_regression.m`).
 - **Phase 2** — Python bindings for `libsedumi` (pybind11/CFFI), operating
   directly on `scipy.sparse.csc_matrix` and NumPy arrays.
 - **Phase 3** — Port the ~90 `.m` files implementing the interior-point

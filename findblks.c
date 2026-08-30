@@ -43,7 +43,7 @@ function Ablk = findblks(At,Ablkjc,blk0,blk1,blkstart) --  Find nonzero blocks
    ************************************************************ */
 #include <string.h>
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define ABLK_OUT plhs[0]
@@ -118,6 +118,7 @@ void findblks(mwIndex *Ablkir, mwIndex *Ablkjc, const mwIndex *Ajc1,const mwInde
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                 int nrhs, const mxArray *prhs[])
 {
@@ -233,3 +234,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(Ajc);
   mxFree(blkstart);
 }
+#endif /* !SEDUMI_STANDALONE */

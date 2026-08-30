@@ -42,7 +42,7 @@ function ADA = getada2(ADA, DAt,Aord, K)
 
 #include <string.h>
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define ADA_OUT plhs[0]
@@ -124,6 +124,7 @@ void getada2(jcir ada, jcir ddota, const mwIndex *perm, const mwIndex *invperm,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -212,3 +213,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
     mxFree(iwork);
   } /* !isempty(ddota) */
 }
+#endif /* !SEDUMI_STANDALONE */

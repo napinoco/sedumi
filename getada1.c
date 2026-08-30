@@ -48,7 +48,7 @@
 
 #include <string.h>
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define ADA_OUT plhs[0]
@@ -158,6 +158,7 @@ void getada1(jcir ada, jcir At, const double *d, const double *ddet,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -259,3 +260,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(iwork);
   mxFree(blkstart);
 }
+#endif /* !SEDUMI_STANDALONE */

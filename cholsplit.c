@@ -39,7 +39,7 @@
 #define CACHESIZ_IN prhs[1]       /* number of KBs cache, e.g. 256 */
 #define NPARIN 2
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include <math.h>
 
 /* ************************************************************
@@ -116,6 +116,7 @@ void getsplit(mwIndex *split, const mwIndex *ljc,const mwIndex *lir,const mwInde
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -182,3 +183,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(split);
   mxFree(xsuper);
 }
+#endif /* !SEDUMI_STANDALONE */

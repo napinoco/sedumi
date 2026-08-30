@@ -39,7 +39,7 @@ function [u,perm,gjc,g] = urotorder(u,K, maxu,permIN)
 
 #include <string.h>
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include "givens.h"
 
@@ -309,6 +309,7 @@ void prpirotorder(mwIndex *perm, double *u,double *upi, mwIndex *gjc,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -488,3 +489,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

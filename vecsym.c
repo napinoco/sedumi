@@ -39,7 +39,7 @@ function y = vecsym(x,K)
 
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define Y_OUT plhs[0]
@@ -136,6 +136,7 @@ void vecsymPSD(double *y, const double *x,const mwIndex rsdpN,const mwIndex sdpN
 
      Computes "symmetrization of x: Yk = (Xk+Xk')/2
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -173,3 +174,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
  x += lqDim; y += lqDim;
  vecsymPSD(y, x,cK.rsdpN,cK.sdpN,cK.sdpNL);
 }
+#endif /* !SEDUMI_STANDALONE */

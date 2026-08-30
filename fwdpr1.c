@@ -40,7 +40,7 @@ function y = fwdpr1(Lden, b)
 
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 /* y = fwdpr1(Lden, b) */
@@ -96,6 +96,7 @@ void fwprodform(double *y, const mwIndex *xsuper, const mwIndex *perm,
    PROCEDURE mexFunction - Entry for Matlab
        y = fwdpr1(Lden, b)
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -200,3 +201,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
     mxFree(betajc);
   } /* if dense columns */
 }
+#endif /* !SEDUMI_STANDALONE */

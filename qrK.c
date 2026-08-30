@@ -43,7 +43,7 @@
 
 #include <string.h>
 #include <math.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define Q_OUT myplhs[0]
@@ -233,6 +233,7 @@ void prpiqrfac(double *beta, double *q, double *qpi, double *u,
    PROCEDURE mexFunction - Entry for Matlab
    [beta,U,d,perm] = qrpfacK(x,K)
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction( int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -294,3 +295,4 @@ void mexFunction( int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

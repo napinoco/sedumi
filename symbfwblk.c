@@ -32,7 +32,7 @@
 
 */
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define X_OUT  plhs[0]
@@ -264,6 +264,7 @@ void symbfwmat(mwIndex *xjc, mwIndex **pxir,mwIndex *pmaxnnz,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -375,3 +376,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(snode);
   mxFree(invperm);
 }
+#endif /* !SEDUMI_STANDALONE */

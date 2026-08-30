@@ -42,7 +42,7 @@ function ddotX = ddot(d,X,blkstart, Xblkjc)
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define DDOTX_OUT plhs[0]
@@ -160,6 +160,7 @@ void spddotxj(jcir y, const double *d,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -306,3 +307,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
    ------------------------------------------------------------ */
   mxFree(blkstart);
 }
+#endif /* !SEDUMI_STANDALONE */

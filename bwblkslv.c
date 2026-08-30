@@ -41,7 +41,7 @@
 
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 #include <string.h>
 
@@ -179,6 +179,7 @@ void selbwsolve(double *y, const mwIndex *Ljc, const mwIndex *Lir, const double 
    y = bwblksolve(L,b, [y])
      y(L.fullperm) = L.L' \ b
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -296,3 +297,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
  mxFree(fwork);
  mxFree(iwork);
 }
+#endif /* !SEDUMI_STANDALONE */

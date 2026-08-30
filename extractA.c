@@ -46,7 +46,7 @@ function Apart = extractA(At,Ajc,blk0,blk1,blkstart[,blkstart2]) --
 
    ************************************************************ */
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define APART_OUT plhs[0]
@@ -94,6 +94,7 @@ void extractA(jcir Y, const mwIndex *Ajc1,const mwIndex *Ajc2,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -188,3 +189,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
    ------------------------------------------------------------ */
   mxFree(Ajc);
 }
+#endif /* !SEDUMI_STANDALONE */

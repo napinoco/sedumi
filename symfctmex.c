@@ -38,7 +38,7 @@
 
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "symfct.h"
 
 #define L_OUT plhs[0]
@@ -71,7 +71,7 @@
      matrix (cjc,cir) to Fortran style sparse matrix (forjc,forir).
      On input, n is number of columns.
    ------------------------------------------------------------ */
-void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir, mwSize n )
+static void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir, mwSize n )
 {
     mwIndex i,j,inz,ix;
 	inz = 0;
@@ -124,6 +124,7 @@ void expandsub( mwSize n, mwSize nsuper,
    PROCEDURE mexFunction - Entry for Matlab
    L = symfctmex(X, perm, cachsz)
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -270,3 +271,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   mxFree(snode);
   mxFree(colcnt);
 }
+#endif /* !SEDUMI_STANDALONE */

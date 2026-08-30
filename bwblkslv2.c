@@ -30,7 +30,7 @@
 % 02110-1301, USA
 
 */
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blkchol.h"
 /* ============================================================
    BACKWARD SOLVE:

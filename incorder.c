@@ -45,7 +45,7 @@ function [perm, dz] = incorder(At,Ajc1,ifirst)
 
  ************************************************************ */
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define PERM_OUT myplhs[0]    /* incremental ordering */
@@ -213,6 +213,7 @@ void incorder(mwIndex *perm, mwIndex *dzjc, mwIndex *dzir,
    PROCEDURE mexFunction - Entry for Matlab
       [perm,dz] = incorder(At,Ajc1,ifirst)   
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
    int nrhs, const mxArray *prhs[])
 {
@@ -341,3 +342,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   for(; i < NPAROUT; i++)
     mxDestroyArray(myplhs[i]);
 }
+#endif /* !SEDUMI_STANDALONE */

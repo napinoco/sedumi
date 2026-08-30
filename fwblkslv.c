@@ -40,7 +40,7 @@
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define Y_OUT plhs[0]
@@ -190,6 +190,7 @@ void selfwsolve(double *y, const mwIndex *Ljc, const mwIndex *Lir, const double 
    y = fwblksolve(L,b, [y])
      y = L.L \ b(L.perm)
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -318,3 +319,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
  mxFree(iwork);
  mxFree(fwork);
 }
+#endif /* !SEDUMI_STANDALONE */

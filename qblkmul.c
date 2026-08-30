@@ -38,7 +38,7 @@ function y = qblkmul(mu,d,blkstart)
 
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define Y_OUT plhs[0]
@@ -54,6 +54,7 @@ function y = qblkmul(mu,d,blkstart)
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -114,3 +115,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
     d += nk;
   }
 }
+#endif /* !SEDUMI_STANDALONE */

@@ -54,7 +54,7 @@
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define L_OUT    plhs[0]
@@ -72,6 +72,7 @@
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
   const int nrhs, const mxArray *prhs[])
 {
@@ -179,3 +180,4 @@ void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir,
 	}
 	forjc[n] = ++inz;
 }
+#endif /* !SEDUMI_STANDALONE */

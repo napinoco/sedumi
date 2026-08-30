@@ -40,7 +40,7 @@ function Ablkjc = partitA(At,blkstart) --  Partition columns of A
    ************************************************************ */
 #include <string.h>
 #include <math.h>      /* floor and log */
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define ABLKJC_OUT plhs[0]
@@ -86,6 +86,7 @@ void partitA(mwIndex *Ablkjc, const mwIndex *Ajc,const mwIndex *Air,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                 int nrhs, const mxArray *prhs[])
 {
@@ -152,3 +153,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(Ablkjc);
   mxFree(blkstart);
 }
+#endif /* !SEDUMI_STANDALONE */

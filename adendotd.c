@@ -39,7 +39,7 @@ function Ad = Adendotd(dense, d, sparAd, Ablk, blkstart)
 */
 
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define AD_OUT plhs[0]
@@ -132,6 +132,7 @@ void adendotd(jcir ad,jcir adotd,jcir aden,const double *d1,const double *d2,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -242,3 +243,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(dencols);
   mxFree(q);
 }
+#endif /* !SEDUMI_STANDALONE */

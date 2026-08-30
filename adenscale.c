@@ -33,7 +33,7 @@
 */
 #include <math.h>
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define SMULT_OUT plhs[0]
@@ -84,6 +84,7 @@ void adenscale(double *smult, const double *detd, const mwIndex *dencols,
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction( int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -161,3 +162,4 @@ void mexFunction( int nlhs, mxArray *plhs[],
   mxFree(blkend);
   mxFree(q);
 }
+#endif /* !SEDUMI_STANDALONE */

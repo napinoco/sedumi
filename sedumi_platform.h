@@ -24,6 +24,7 @@
    Octave builds; size_t matches that here. */
 typedef size_t mwIndex;
 typedef size_t mwSize;
+typedef ptrdiff_t mwSignedIndex;
 
 /* Reference BLAS / OpenBLAS default to 32-bit Fortran integers (LP64,
    not ILP64) on Linux/macOS/Windows, unlike MATLAB's mwSignedIndex-sized
@@ -57,6 +58,15 @@ void sedumi_fatal(const char *msg);
 #define mexWarnMsgTxt(msg) sedumi_warn(msg)
 #define mexPrintf printf
 #define mxAssert(cond, msg) do { if (!(cond)) sedumi_fatal(msg); } while (0)
+
+/* A few of the "computational core" functions (e.g. symbfwmat() in
+   symbfwblk.c) grow a work array with mxRealloc() directly, rather than
+   only inside their file's mexFunction gateway. Map the MEX allocator
+   family onto the standard one so those call sites need no change. */
+#define mxCalloc(n, sz) calloc((n), (sz))
+#define mxMalloc(sz) malloc(sz)
+#define mxRealloc(p, sz) realloc((p), (sz))
+#define mxFree(p) free(p)
 
 void sedumi_warn(const char *msg);
 

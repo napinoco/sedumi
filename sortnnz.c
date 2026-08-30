@@ -41,7 +41,7 @@ function perm = sortnnz(At,Ajc1,Ajc2)
 
    ************************************************************ */
 #include <string.h>
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "blksdp.h"
 
 #define PERM_OUT plhs[0]
@@ -74,6 +74,7 @@ void sortnnz(keyint *y, const mwIndex *jc1, const mwIndex *jc2, const mwSize m)
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
@@ -138,3 +139,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(y);
   mxFree(Ajc);
 }
+#endif /* !SEDUMI_STANDALONE */

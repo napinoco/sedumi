@@ -37,7 +37,7 @@
 
 */
 
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "ordmmd.h"
 
 #define PERM_OUT plhs[0]
@@ -52,7 +52,7 @@
      matrix (cjc,cir) to Fortran style sparse matrix (forjc,forir).
      On input, n is number of columns.
    ------------------------------------------------------------ */
-void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir, mwSize n )
+static void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir, mwSize n )
 {
     mwIndex i,j,inz,ix;
 	inz = 0;
@@ -72,6 +72,7 @@ void getadj(mwIndex *forjc,mwIndex *forir,const mwIndex *cjc,const mwIndex *cir,
    PROCEDURE mexFunction - Entry for Matlab
    perm = ordmmdmex(X) where X is symmetric sparse.
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(const int nlhs, mxArray *plhs[],
                  const int nrhs, const mxArray *prhs[])
 {
@@ -137,3 +138,4 @@ void mexFunction(const int nlhs, mxArray *plhs[],
   mxFree(xadj);
   mxFree(adjncy);
 }
+#endif /* !SEDUMI_STANDALONE */

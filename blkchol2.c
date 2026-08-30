@@ -34,7 +34,7 @@
 #include <math.h>
 #include <string.h>
 #include "blksdp.h"
-#include "mex.h"
+#include "sedumi_platform.h"
 
 /* ------------------------------------------------------------
    PROTOTYPES:

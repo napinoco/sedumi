@@ -36,7 +36,7 @@ function y = invcholfac(u,K, perm)
 % 02110-1301, USA
 
 */
-#include "mex.h"
+#include "sedumi_platform.h"
 #include "triuaux.h"
 
 #define Y_OUT plhs[0]
@@ -56,6 +56,7 @@ function y = invcholfac(u,K, perm)
 /* ************************************************************
    PROCEDURE mexFunction - Entry for Matlab
    ************************************************************ */
+#ifndef SEDUMI_STANDALONE
 void mexFunction(int nlhs, mxArray *plhs[],
   int nrhs, const mxArray *prhs[])
 {
@@ -166,3 +167,4 @@ void mexFunction(int nlhs, mxArray *plhs[],
   mxFree(fwork);
   mxFree(iwork);
 }
+#endif /* !SEDUMI_STANDALONE */
