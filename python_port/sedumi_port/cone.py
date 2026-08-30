@@ -689,6 +689,58 @@ def qinvjmul(labx, frmx, b, K: dict):
     return np.concatenate([y1, y_rest])
 
 
+def tdet(x, K: dict):
+    """tdetx = tdet(x,K): per-Lorentz-block "trace determinant"
+    x1^2 - x2'x2 (the internal x0-stacked-then-vectors layout, via
+    K.mainblks/K.qblkstart)."""
+    lorN = len(K.get("q", []))
+    if lorN == 0:
+        return np.zeros(0)
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    ix = np.asarray(K["mainblks"], dtype=np.int64).ravel()
+    i1, i2, i3 = int(ix[0]), int(ix[1]), int(ix[2])
+    return x[i1 - 1 : i2 - 1] ** 2 - _native.ddot(x[i2 - 1 : i3 - 1], x, K["qblkstart"])
+
+
+def asmDxq(d: dict, x, K: dict, ddotx=None, want_t: bool = False):
+    """y = asmDxq(d,x,K,ddotx): y = D(d)*x = P(d)^{1/2} x for the Lorentz
+    part, given the scaling point `d` (as built by sdinit.m/
+    updtransfo.m: d.q1, d.q2, d.det, d.auxdet, d.auxtr).
+
+    asmDxq.m's `if nargout<2` branch adds an extra `[t.*d.q1;
+    qblkmul(t,d.q2,...)]` term to y only when called with a single
+    output -- EVERY real caller in the codebase (loopPcg.m, sdfactor.m,
+    sedumi.m, updtransfo.m, wrapPcg.m) uses the single-output form, so
+    that extra term is always wanted in practice; `want_t=True` switches
+    to the 2-output form instead (returns `(y, t)`, WITHOUT that extra
+    term), for the one variant asmDxq.m itself supports but which no
+    real caller actually uses."""
+    lorN = len(K.get("q", []))
+    if lorN == 0:
+        return (np.zeros(0), np.zeros(0)) if want_t else np.zeros(0)
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    ix = np.asarray(K["mainblks"], dtype=np.int64).ravel()
+    lq = int(K["lq"])
+    if x.size >= lq:
+        i1, i2 = int(ix[0]), int(ix[1])
+    else:
+        i1, i2 = 1, lorN + 1
+    t = x[i1 - 1 : i2 - 1].copy()
+    if ddotx is None:
+        ddotx = d["q1"] * t + _native.ddot(d["q2"], x, K["qblkstart"])
+    else:
+        ddotx = np.asarray(ddotx, dtype=np.float64).ravel(order="F")
+    t = (ddotx + t * d["auxdet"]) / d["auxtr"]
+    sdet = np.sqrt(d["det"])
+    y = np.concatenate(
+        [t * d["auxdet"] - sdet * x[i1 - 1 : i2 - 1], _native.qblkmul(sdet, x, K["qblkstart"])]
+    )
+    if want_t:
+        return y, t
+    y = y + np.concatenate([t * d["q1"], _native.qblkmul(t, d["q2"], K["qblkstart"])])
+    return y
+
+
 def frameit(lab, frmq, frms, K: dict):
     """x = frameit(lab,frmq,frms,K): x = [lab(L-part); qframeit(...);
     psdframeit(...)] -- a pure concatenation, `lab` in the same grouped
