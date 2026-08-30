@@ -651,6 +651,150 @@ def numeric_cholesky(sym: dict, X_csc, pars: dict | None = None, absd=None) -> d
     }
 
 
+_lib.ddotxj.argtypes = [c_double_p, c_double_p, c_double_p, c_size_t_p, ctypes.c_size_t]
+_lib.ddotxj.restype = None
+
+_lib.blkmul.argtypes = [c_double_p, c_double_p, c_double_p, c_size_t_p, ctypes.c_size_t, ctypes.c_size_t]
+_lib.blkmul.restype = ctypes.c_int
+
+_lib.vecsymPSD.argtypes = [c_double_p, c_double_p, ctypes.c_size_t, ctypes.c_size_t, c_double_p]
+_lib.vecsymPSD.restype = None
+
+_lib.rquaddadd.argtypes = [c_double_p, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+_lib.rquaddadd.restype = ctypes.c_double
+
+
+def ddot(d, X, blkstart):
+    """ddot(d, X, blkstart) -- dense-X path of ddot.c/ddotxj: for each
+    column of X and each Lorentz block k (spanning blkstart[k]:blkstart[k+1]
+    in 0-indexed, half-open convention), computes d[k]'*X[block,column].
+    Wraps ddotxj() directly (no MATLAB/Octave/MEX); the sparse-X path
+    (spddotxj) is not yet wrapped -- Phase 3 will add it if/when the .m
+    port actually needs ddot on sparse X.
+    """
+    import numpy as np
+
+    d = np.ascontiguousarray(d, dtype=np.float64)
+    X = np.ascontiguousarray(X, dtype=np.float64)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    blkstart = np.ascontiguousarray(blkstart, dtype=np.uintp)
+    nblk = blkstart.size - 1
+    nrows, ncols = X.shape
+
+    qDim = blkstart[-1] - blkstart[0]
+    if d.size != qDim:
+        d = d[int(blkstart[0]) :]
+
+    out = np.empty((nblk, ncols), dtype=np.float64, order="F")
+    bs = (blkstart - blkstart[0]).astype(np.uintp)  # ddotxj asserts blkstart[0]==0
+    dptr = d.ctypes.data_as(c_double_p)
+    bsptr = bs.ctypes.data_as(c_size_t_p)
+    for j in range(ncols):
+        col = np.ascontiguousarray(X[:, j])
+        _lib.ddotxj(
+            out[:, j].ctypes.data_as(c_double_p), dptr,
+            col.ctypes.data_as(c_double_p), bsptr, nblk,
+        )
+    return out.squeeze(axis=1) if ncols == 1 else out
+
+
+def blkmul(mu, d, nL):
+    """y[block k] = mu[k] * d[block k], blocks given by nL (block LENGTHS,
+    not offsets -- see blkmul.m). Wraps blkmul() (blkmul.c) directly."""
+    import numpy as np
+
+    mu = np.ascontiguousarray(mu, dtype=np.float64).ravel()
+    d = np.ascontiguousarray(d, dtype=np.float64).ravel()
+    nL_arr = np.ascontiguousarray(nL, dtype=np.uintp).ravel()
+    kappa = mu.size
+    n = d.size
+    y = np.zeros(n, dtype=np.float64)
+
+    remaining = _lib.blkmul(
+        y.ctypes.data_as(c_double_p), mu.ctypes.data_as(c_double_p),
+        d.ctypes.data_as(c_double_p), nL_arr.ctypes.data_as(c_size_t_p),
+        kappa, n,
+    )
+    if remaining != 0:
+        raise ValueError("blkmul: nL size mismatch (sum(nL) != len(d))")
+    return y
+
+
+def qblkmul(mu, d, blkstart):
+    """y[block k] = mu[k] * d[block k], blocks given by blkstart
+    (1-indexed, as in the .m/MEX convention -- see qblkmul.m). qblkmul.c
+    has no separable core function (the whole computation lives in its
+    mexFunction), so this ports that logic directly to NumPy rather than
+    binding a C function that doesn't exist as such."""
+    import numpy as np
+
+    mu = np.ascontiguousarray(mu, dtype=np.float64).ravel()
+    d = np.ascontiguousarray(d, dtype=np.float64).ravel()
+    blkstart = np.ascontiguousarray(blkstart, dtype=np.int64).ravel() - 1
+    nblk = mu.size
+    span = int(blkstart[-1] - blkstart[0])
+
+    if d.size != span:
+        if d.size == nblk + span:
+            d = d[nblk:]
+        else:
+            d = d[int(blkstart[0]) :]
+
+    out = np.empty(span, dtype=np.float64)
+    pos = 0
+    for k in range(nblk):
+        nk = int(blkstart[k + 1] - blkstart[k])
+        out[pos : pos + nk] = mu[k] * d[pos : pos + nk]
+        pos += nk
+    return out
+
+
+def vecsym(x, K: dict):
+    """y = vecsym(x, K): copies the LP+SOCP part of x unchanged, then
+    symmetrizes each real PSD block ((Xk+Xk')/2) and Hermitianizes each
+    complex one, via vecsymPSD() (vecsym.c) directly."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    x = np.ascontiguousarray(x, dtype=np.float64).ravel()
+    lqDim = cK.lpN + cK.qDim
+    lenfull = lqDim + cK.rDim + cK.hDim
+    if x.size != lenfull:
+        raise ValueError(f"x must have length {lenfull}, got {x.size}")
+
+    y = x.copy()
+    sdpNL = cK._keepalive[2]  # the "s" array cone_from_dict built cK from
+    _lib.vecsymPSD(
+        y[lqDim:].ctypes.data_as(c_double_p),
+        x[lqDim:].ctypes.data_as(c_double_p),
+        cK.rsdpN, cK.sdpN,
+        sdpNL.ctypes.data_as(c_double_p) if cK.sdpN else None,
+    )
+    return y
+
+
+def quadadd(xhi, xlo, y):
+    """(zhi, zlo) = quadadd(xhi, xlo, y): extended-precision (double-
+    double style) addition xhi+xlo+y, elementwise, via rquaddadd()
+    (quadadd.c) directly -- not reimplemented in Python, since the whole
+    point of this kernel is the specific extended-precision arithmetic
+    sequence, which is easy to get subtly wrong by "simplifying"."""
+    import numpy as np
+
+    xhi = np.ascontiguousarray(xhi, dtype=np.float64).ravel()
+    xlo = np.ascontiguousarray(xlo, dtype=np.float64).ravel()
+    y = np.ascontiguousarray(y, dtype=np.float64).ravel()
+    m = xhi.size
+    zhi = np.empty(m, dtype=np.float64)
+    zlo = np.empty(m, dtype=np.float64)
+    for i in range(m):
+        lo = ctypes.c_double(0.0)
+        zhi[i] = _lib.rquaddadd(ctypes.byref(lo), xhi[i], xlo[i], y[i])
+        zlo[i] = lo.value
+    return zhi, zlo
+
+
 def cone_from_dict(K: dict) -> ConeK:
     """Build a ConeK from a plain dict shaped like SeDuMi's K struct, e.g.
     {"f": 2, "l": 3, "q": [4], "s": [2, 3]}. Mirrors what conepars() does
@@ -687,4 +831,9 @@ def cone_from_dict(K: dict) -> ConeK:
 
     cone = ConeK()
     _lib.conepars_raw(ctypes.byref(raw), ctypes.byref(cone))
+    # cone.{lorNL,rconeNL,sdpNL} are just copies of raw.{q,r,s}, i.e.
+    # pointers into q/r/s above -- keep them alive as long as `cone` is,
+    # or they'd dangle the moment this function returns and q/r/s get
+    # garbage collected.
+    cone._keepalive = (q, r, s)
     return cone
