@@ -1010,6 +1010,266 @@ def dpr1fact(x, d, Lsym: dict, smult, maxu: float):
     return Lden, lab
 
 
+for _name, _argtypes, _restype in [
+    ("matgivens", [c_double_p, c_double_p, c_size_t_p, ctypes.c_size_t], None),
+    ("rotorder", [c_size_t_p, c_double_p, c_size_t_p, c_double_p, c_double_p,
+                  ctypes.c_double, ctypes.c_size_t], None),
+    ("qdivv", [c_double_p, c_double_p, c_double_p, ctypes.c_size_t], None),
+    ("psdframeit", [c_double_p, c_double_p, c_double_p, c_size_t_p,
+                     ctypes.c_size_t, ctypes.c_size_t, c_double_p], None),
+    ("psdinvjmul", [c_double_p, c_double_p, c_double_p, c_double_p, c_size_t_p,
+                     ctypes.c_size_t, ctypes.c_size_t, c_double_p], None),
+    ("qrfac", [c_double_p, c_double_p, c_double_p, ctypes.c_size_t], None),
+    ("utmulx", [c_double_p, c_double_p, c_double_p, ctypes.c_size_t], None),
+    ("triu2sym", [c_double_p, ctypes.c_size_t], None),
+    ("uperm", [c_double_p, c_double_p, c_size_t_p, ctypes.c_size_t], None),
+    ("invmatperm", [c_double_p, c_double_p, c_size_t_p, ctypes.c_size_t], None),
+]:
+    _fn = getattr(_lib, _name)
+    _fn.argtypes = _argtypes
+    _fn.restype = _restype
+
+
+def _real_sdp_blocks(cK):
+    """Yields (offset_into_x_or_frms_style_array, nk) for each REAL
+    (non-complex-Hermitian) PSD block, i.e. k in range(cK.rsdpN). Complex
+    Hermitian PSD blocks (k in rsdpN:sdpN) are not covered by any
+    function in this cluster yet -- a documented gap, not an oversight;
+    see each function's docstring."""
+    sdpNL = cK._keepalive[2]
+    return [int(sdpNL[k]) for k in range(cK.rsdpN)]
+
+
+def givensrot(gjc, g, x, K: dict):
+    """y = givensrot(gjc, g, x, K): apply a sequence of precomputed
+    Givens rotations to each real PSD block of x. Real-symmetric blocks
+    only (K.s[:K.rsdpN]) -- complex Hermitian is not covered. Wraps
+    matgivens() (givensrot.c) per block."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    x = np.ascontiguousarray(x, dtype=np.float64).ravel()
+    y = x.copy()
+    gjc_full = np.ascontiguousarray(gjc, dtype=np.int64).ravel()  # already
+    # 0-indexed/C-style per givensrot.c's comment ("don't subtract 1")
+    g_full = np.ascontiguousarray(g, dtype=np.float64).ravel()
+
+    xoff = goff = joff = 0
+    for nk in _real_sdp_blocks(cK):
+        nksqr = nk * nk
+        gjc_blk = np.ascontiguousarray(gjc_full[joff : joff + nk], dtype=np.uintp)
+        _lib.matgivens(
+            y[xoff : xoff + nksqr].ctypes.data_as(c_double_p),
+            g_full[goff:].ctypes.data_as(c_double_p),
+            gjc_blk.ctypes.data_as(c_size_t_p), nk,
+        )
+        goff += 2 * int(gjc_blk[nk - 1]) if nk > 0 else 0
+        xoff += nksqr
+        joff += nk
+    return y
+
+
+def urotorder(u, K: dict, maxu: float):
+    """[u_out, perm, gjc, g] = urotorder(u, K, maxu): stably reorders
+    each real PSD block's upper-triangular factor via Givens rotations.
+    Real-symmetric blocks only. Wraps rotorder() (urotorder.c) per block,
+    then uperm()+triu2sym() to physically permute and symmetrize."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    u_in = np.ascontiguousarray(u, dtype=np.float64).ravel()
+    u_out = np.empty_like(u_in)
+    perm_out = np.zeros(cK.rLen + cK.hLen, dtype=np.float64)
+    gjc_out = np.zeros(cK.rLen + cK.hLen, dtype=np.float64)
+    g_chunks = []
+
+    xoff = poff = 0
+    for nk in _real_sdp_blocks(cK):
+        nksqr = nk * nk
+        fwork = u_in[xoff : xoff + nksqr].copy()
+        perm = np.zeros(nk, dtype=np.uintp)
+        gjc = np.zeros(nk, dtype=np.uintp)
+        d = np.zeros(nk, dtype=np.float64)
+        g = np.zeros(max(nk * (nk - 1), 1), dtype=np.float64)  # upper bound
+
+        _lib.rotorder(
+            perm.ctypes.data_as(c_size_t_p), fwork.ctypes.data_as(c_double_p),
+            gjc.ctypes.data_as(c_size_t_p), g.ctypes.data_as(c_double_p),
+            d.ctypes.data_as(c_double_p), float(maxu) ** 2, nk,
+        )
+        block_out = np.empty(nksqr, dtype=np.float64)
+        _lib.uperm(
+            block_out.ctypes.data_as(c_double_p), fwork.ctypes.data_as(c_double_p),
+            perm.ctypes.data_as(c_size_t_p), nk,
+        )
+        _lib.triu2sym(block_out.ctypes.data_as(c_double_p), nk)
+        u_out[xoff : xoff + nksqr] = block_out
+
+        ginz = int(gjc[nk - 1]) if nk > 0 else 0
+        perm_out[poff : poff + nk] = perm + 1  # 1-indexed, .m-facing
+        gjc_out[poff : poff + nk] = gjc
+        g_chunks.append(g[: 2 * ginz])
+        xoff += nksqr
+        poff += nk
+    g_out = np.concatenate(g_chunks) if g_chunks else np.zeros(0)
+    return u_out, perm_out, gjc_out, g_out
+
+
+def sqrtinv(q, vlab, K: dict):
+    """y = sqrtinv(q, vlab, K): y = (Q / diag(sqrt(vlab)))' per real PSD
+    block, so Y'*Y = inv(Q*diag(vlab)*Q'). Real-symmetric blocks only.
+    Wraps qdivv() (sqrtinv.c) per block."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    q = np.ascontiguousarray(q, dtype=np.float64).ravel()
+    vlab = np.ascontiguousarray(vlab, dtype=np.float64).ravel()
+    diagskip = cK.lpN + 2 * cK.lorN
+    v = vlab[diagskip:]
+    y = np.empty_like(q)
+
+    qoff = voff = 0
+    for nk in _real_sdp_blocks(cK):
+        nksqr = nk * nk
+        _lib.qdivv(
+            y[qoff : qoff + nksqr].ctypes.data_as(c_double_p),
+            q[qoff : qoff + nksqr].ctypes.data_as(c_double_p),
+            v[voff : voff + nk].ctypes.data_as(c_double_p), nk,
+        )
+        qoff += nksqr
+        voff += nk
+    return y
+
+
+def psdframeit(lab, frms, K: dict):
+    """x = psdframeit(lab, frms, K): x = FRM*lab, FRM a product-form
+    Householder reflection (as produced by qrK()). Real-symmetric blocks
+    only. Wraps psdframeit() (psdframeit.c) directly -- it already loops
+    over every block itself, given sdpNL/rsdpN/sdpN."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    lab = np.ascontiguousarray(lab, dtype=np.float64).ravel()
+    frms = np.ascontiguousarray(frms, dtype=np.float64).ravel()
+    lenud = cK.rDim + cK.hDim
+    x = np.zeros(lenud, dtype=np.float64)
+    fwsiz = max(cK.rMaxn**2, 2 * cK.hMaxn**2, 1)
+    fwork = np.zeros(fwsiz, dtype=np.float64)
+    sdpNL = np.ascontiguousarray(cK._keepalive[2], dtype=np.uintp)
+
+    _lib.psdframeit(
+        x.ctypes.data_as(c_double_p), frms.ctypes.data_as(c_double_p),
+        lab.ctypes.data_as(c_double_p), sdpNL.ctypes.data_as(c_size_t_p),
+        cK.rsdpN, cK.sdpN, fwork.ctypes.data_as(c_double_p),
+    )
+    return x
+
+
+def psdinvjmul(x, frms, y, K: dict):
+    """z = psdinvjmul(x, frms, y, K): solves X*Z+Z*X = 2*Y in the PSD
+    cone, given X's eigenvalues `x` and eigenbasis `frms` (product-form
+    Householder, as from qrK()). Real-symmetric blocks only. Wraps
+    psdinvjmul() (psdinvjmul.c) directly (loops over blocks itself)."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    frms = np.ascontiguousarray(frms, dtype=np.float64).ravel()
+    x = np.ascontiguousarray(x, dtype=np.float64).ravel()
+    y = np.ascontiguousarray(y, dtype=np.float64).ravel()
+    lenud = cK.rDim + cK.hDim
+    z = np.zeros(lenud, dtype=np.float64)
+    fwsiz = max(cK.rMaxn, 2 * cK.hMaxn, 1)
+    fwork = np.zeros(fwsiz, dtype=np.float64)
+    sdpNL = np.ascontiguousarray(cK._keepalive[2], dtype=np.uintp)
+
+    _lib.psdinvjmul(
+        z.ctypes.data_as(c_double_p), frms.ctypes.data_as(c_double_p),
+        x.ctypes.data_as(c_double_p), y.ctypes.data_as(c_double_p),
+        sdpNL.ctypes.data_as(c_size_t_p), cK.rsdpN, cK.sdpN,
+        fwork.ctypes.data_as(c_double_p),
+    )
+    return z
+
+
+def qrK(x, K: dict):
+    """[frms, r] = qrK(x, K): QR-factorizes each real PSD block of x via
+    Householder reflections. Real-symmetric blocks only. Wraps qrfac()
+    (qrK.c) per block.
+
+    Per qrK.c's mexFunction, a real nxn block of `frms` is qrfac()'s `q`
+    and `beta` outputs packed into ONE nksqr(=n^2)-length buffer: the
+    first n*(n-1) values are the Householder vectors (qrfac's `q`,
+    exactly as psdframeit()/psdinvjmul() expect them), and the LAST n
+    values are `beta` (qrfac is called with beta pointing at
+    frms_block[nksqr-n:]. `r`'s block is qrfac's mutated `u` verbatim --
+    triu(u) is the real upper-triangular R factor, but tril(u,-1) is
+    left as whatever qrfac's arithmetic happened to leave there
+    ("undefined" per qrfac's own doc comment) rather than cleaned to
+    zero, matching the real MEX build bit-for-bit.
+    """
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    x = np.ascontiguousarray(x, dtype=np.float64).ravel()
+    lenud = cK.rDim + cK.hDim
+    if x.size != lenud:
+        raise ValueError(f"x must have length {lenud}, got {x.size}")
+
+    frms = np.zeros(lenud, dtype=np.float64)
+    r = x.copy()
+
+    off = 0
+    for nk in _real_sdp_blocks(cK):
+        nksqr = nk * nk
+        u = r[off : off + nksqr]  # qrfac mutates this block of r in place
+        frms_blk = frms[off : off + nksqr]
+        beta_ptr = frms_blk[nksqr - nk :].ctypes.data_as(c_double_p)
+        _lib.qrfac(
+            beta_ptr, frms_blk.ctypes.data_as(c_double_p),
+            u.ctypes.data_as(c_double_p), nk,
+        )
+        off += nksqr
+    return frms, r
+
+
+def invcholfac(u, K: dict, perm=None):
+    """y = invcholfac(u, K, perm=None): y = U'*U per real PSD block (or
+    invperm(U'*U) if `perm` given). Real-symmetric blocks only. Wraps
+    utmulx()+triu2sym() (+invmatperm() if perm given), from
+    invcholfac.c/triuaux.c."""
+    import numpy as np
+
+    cK = cone_from_dict(K)
+    u = np.ascontiguousarray(u, dtype=np.float64).ravel()
+    lenud = cK.rDim + cK.hDim
+    y = np.zeros(lenud, dtype=np.float64)
+
+    perm_arr = None
+    if perm is not None:
+        perm_arr = (np.ascontiguousarray(perm, dtype=np.int64).ravel() - 1).astype(np.uintp)
+
+    off = poff = 0
+    for nk in _real_sdp_blocks(cK):
+        nksqr = nk * nk
+        block = np.zeros(nksqr, dtype=np.float64)
+        _lib.utmulx(
+            block.ctypes.data_as(c_double_p), u[off : off + nksqr].ctypes.data_as(c_double_p),
+            u[off : off + nksqr].ctypes.data_as(c_double_p), nk,
+        )
+        _lib.triu2sym(block.ctypes.data_as(c_double_p), nk)
+        if perm_arr is not None:
+            _lib.invmatperm(
+                y[off : off + nksqr].ctypes.data_as(c_double_p),
+                block.ctypes.data_as(c_double_p),
+                perm_arr[poff : poff + nk].ctypes.data_as(c_size_t_p), nk,
+            )
+        else:
+            y[off : off + nksqr] = block
+        off += nksqr
+        poff += nk
+    return y
+
+
 def cone_from_dict(K: dict) -> ConeK:
     """Build a ConeK from a plain dict shaped like SeDuMi's K struct, e.g.
     {"f": 2, "l": 3, "q": [4], "s": [2, 3]}. Mirrors what conepars() does
