@@ -171,6 +171,44 @@ _lib.expandsub.argtypes = [
 ]
 _lib.expandsub.restype = None
 
+_lib.gettmpsiz.argtypes = [c_size_t_p, c_size_t_p, c_size_t_p, ctypes.c_size_t, c_size_t_p]
+_lib.gettmpsiz.restype = ctypes.c_size_t
+
+_lib.permuteP.argtypes = [
+    c_size_t_p, c_size_t_p, c_double_p,
+    c_size_t_p, c_size_t_p, c_double_p,
+    c_size_t_p, c_double_p, ctypes.c_size_t,
+]
+_lib.permuteP.restype = None
+
+_lib.spchol.argtypes = [
+    ctypes.c_size_t, ctypes.c_size_t, c_size_t_p,
+    c_size_t_p, c_size_t_p, c_size_t_p, c_double_p,
+    c_size_t_p, c_double_p, c_double_p, c_size_t_p,
+    ctypes.c_double, ctypes.c_double, ctypes.c_double,
+    c_size_t_p, c_size_t_p,
+    ctypes.c_size_t, c_size_t_p, ctypes.c_size_t, c_double_p,
+]
+_lib.spchol.restype = ctypes.c_size_t
+
+_SIZE_T_ERROR = (1 << 64) - 1  # (mwIndex)-1 sentinel: spchol/blkLDL's
+# "insufficient workspace" return value, wrapped around through mwIndex
+# being unsigned (size_t) -- ctypes.c_size_t surfaces it as this value
+# rather than -1.
+
+
+def _compute_snode(xsuper, m):
+    """Mirrors the small "map each column to its supernode" loop that
+    appears identically in choltmpsiz.c and blkchol.c's spchol():
+        j = xsuper[0]
+        for jsup in range(nsuper): while j < xsuper[jsup+1]: snode[j++] = jsup
+    """
+    import numpy as np
+
+    nsuper = len(xsuper) - 1
+    counts = np.diff(np.asarray(xsuper, dtype=np.int64))
+    return np.repeat(np.arange(nsuper, dtype=np.int64), counts).astype(np.uintp)
+
 
 def _as_double_array(x):
     import numpy as np
@@ -458,10 +496,158 @@ def symbolic_cholesky(A_csc, perm0):
         shape=(m, m),
     )
 
+    final_xsuper = xsuper[: nsuper_c.value + 1] - 1
+    snode_for_tmpsiz = _compute_snode(final_xsuper, m).copy()
+    tmpsiz = _lib.gettmpsiz(
+        Ljc.astype(np.uintp).ctypes.data_as(c_size_t_p),
+        Lir[:nnz_L].astype(np.uintp).ctypes.data_as(c_size_t_p),
+        final_xsuper.astype(np.uintp).ctypes.data_as(c_size_t_p),
+        nsuper_c.value,
+        snode_for_tmpsiz.ctypes.data_as(c_size_t_p),
+    )
+
     return {
         "L": L_csc,
         "perm": perm - 1,
-        "xsuper": xsuper[: nsuper_c.value + 1] - 1,
+        "xsuper": final_xsuper,
+        "tmpsiz": int(tmpsiz),
+    }
+
+
+def numeric_cholesky(sym: dict, X_csc, pars: dict | None = None, absd=None) -> dict:
+    """Numeric block sparse LDL' factorization: mirrors
+    `[L.L, L.d, skip, diagadd] = blkchol(L, X, pars, absd)` (blkchol.c's
+    permuteP + spchol/blkLDL) exactly, no MATLAB/Octave/MEX in the
+    calling path.
+
+    Parameters
+    ----------
+    sym : dict from symbolic_cholesky() -- needs "L" (pattern), "perm"
+        (0-indexed), "xsuper" (0-indexed), "tmpsiz".
+    X_csc : scipy.sparse.csc_matrix, the numeric matrix to factor (only
+        its lower triangle is read, matching P(perm,perm) -- SeDuMi
+        always builds X to already be symmetric with only tril stored).
+    pars : optional dict overriding canceltol (1e-12), maxu (5e2),
+        abstol (1e-20), delay (False) -- same names/defaults as blkchol.c.
+    absd : optional length-m array of "before cancellation" diagonal
+        magnitudes (pars.absd in the .m API); defaults to X's own
+        diagonal.
+
+    Returns dict with "L" (scipy.sparse.csc_matrix, same pattern as
+    sym["L"], numeric values), "d" (length-m diagonal of D, with
+    d[skip]==0 as blkchol always reports it), "skip" (0-indexed columns
+    where the pivot was too unstable and got replaced with a unit
+    column -- matching `L.d(find(L.skip)) = inf` in blkchol.m's own
+    solve recipe), "diagadd" (values added to the diagonal at the
+    OTHER unstable pivots that were stabilized instead of skipped).
+    """
+    import numpy as np
+    import scipy.sparse
+
+    m = X_csc.shape[0]
+    L_pattern = sym["L"].tocsc()
+    perm = np.ascontiguousarray(sym["perm"], dtype=np.uintp)
+    xsuper = np.ascontiguousarray(sym["xsuper"], dtype=np.uintp)
+    nsuper = xsuper.size - 1
+    tmpsiz = sym["tmpsiz"]
+
+    pars = pars or {}
+    canceltol = float(pars.get("canceltol", 1e-12))
+    maxu = float(pars.get("maxu", 5e2))
+    abstol = max(float(pars.get("abstol", 1e-20)), 0.0)
+    use_delay = bool(pars.get("delay", False))
+
+    def p_size_t(arr):
+        return arr.ctypes.data_as(c_size_t_p)
+
+    def p_double(arr):
+        return arr.ctypes.data_as(c_double_p)
+
+    Ljc = np.ascontiguousarray(L_pattern.indptr, dtype=np.uintp)
+    Lir_original = np.ascontiguousarray(L_pattern.indices, dtype=np.uintp)
+    Lir = Lir_original.copy()  # spchol uses this as scratch, restored after
+    Lpr = np.zeros(int(Ljc[-1]), dtype=np.float64)
+
+    Pj = np.zeros(max(m, 1), dtype=np.float64)  # permuteP's own scratch space
+    X = X_csc.tocsc()
+    Pjc = np.ascontiguousarray(X.indptr, dtype=np.uintp)
+    Pir = np.ascontiguousarray(X.indices, dtype=np.uintp)
+    Ppr = np.ascontiguousarray(X.data, dtype=np.float64)
+
+    _lib.permuteP(
+        p_size_t(Ljc), p_size_t(Lir), p_double(Lpr),
+        p_size_t(Pjc), p_size_t(Pir), p_double(Ppr),
+        p_size_t(perm), p_double(Pj), m,
+    )
+
+    if absd is not None:
+        absd_arr = np.ascontiguousarray(absd, dtype=np.float64)
+        orgd = absd_arr[perm.astype(np.int64)].copy()
+    else:
+        orgd = np.array([Lpr[Ljc[j]] for j in range(m)], dtype=np.float64)
+
+    snode = np.zeros(max(m, 1), dtype=np.uintp)
+    xlindx = np.zeros(m + 1, dtype=np.uintp)
+    d = np.zeros(m, dtype=np.float64)
+    skip = np.zeros(max(m, 1), dtype=np.uintp)
+    nadd_c = ctypes.c_size_t(0)
+
+    iwsiz = max(2 * (m + nsuper), 1)
+    fwsiz = max(tmpsiz, 1)
+    iwork = np.zeros(iwsiz, dtype=np.uintp)
+    fwork = np.zeros(fwsiz, dtype=np.float64)
+
+    nskip = _lib.spchol(
+        m, nsuper, p_size_t(xsuper),
+        p_size_t(snode), p_size_t(xlindx), p_size_t(Lir), p_double(orgd),
+        p_size_t(Ljc), p_double(Lpr), p_double(d), p_size_t(perm),
+        abstol, canceltol, maxu,
+        p_size_t(skip), ctypes.byref(nadd_c),
+        iwsiz, p_size_t(iwork), fwsiz, p_double(fwork),
+    )
+    if nskip == _SIZE_T_ERROR:
+        raise RuntimeError("spchol: insufficient working storage (iwsiz/fwsiz too small)")
+    nadd = nadd_c.value
+
+    # spchol used Lir as scratch (the "compress subscripts" step turns it
+    # into a per-supernode compact array); the *sparsity pattern* of the
+    # output L is unchanged from the input, so restore it -- exactly the
+    # memcpy(L.ir, LINir, ...) in blkchol.c's mexFunction.
+    Lir[:] = Lir_original
+
+    skip = skip[:nskip]
+    diagadd_idx = np.zeros(nadd, dtype=np.uintp)
+    diagadd_val = np.zeros(nadd, dtype=np.float64)
+
+    skip_out = []
+    skip_val = []
+    for j in range(nskip):
+        i = int(skip[j])
+        if use_delay:
+            skip_val.append(1.0)
+        else:
+            skip_val.append(Lpr[Ljc[i]])
+            Lpr[Ljc[i]] = 1.0
+            Lpr[Ljc[i] + 1 : Ljc[i + 1]] = 0.0
+        skip_out.append(i)
+
+    # iwork[:nadd] holds the diagadd indices, written by spchol.
+    for j in range(nadd):
+        i = int(iwork[j])
+        diagadd_idx[j] = i
+        diagadd_val[j] = orgd[i]
+
+    L_csc = scipy.sparse.csc_matrix(
+        (Lpr, Lir.astype(np.int64), Ljc.astype(np.int64)), shape=(m, m)
+    )
+
+    return {
+        "L": L_csc,
+        "d": d,
+        "skip": np.array(skip_out, dtype=np.int64),
+        "skip_values": np.array(skip_val, dtype=np.float64),
+        "diagadd_index": diagadd_idx.astype(np.int64),
+        "diagadd": diagadd_val,
     }
 
 
