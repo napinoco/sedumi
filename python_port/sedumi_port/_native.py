@@ -514,6 +514,34 @@ def symbolic_cholesky(A_csc, perm0):
     }
 
 
+def symbolic_cholesky_dense(m: int) -> dict:
+    """Mirrors symbchol.m's `else` branch (`spars(ADA)==1`, a fully
+    dense matrix): skips minimum-degree ordering entirely and returns
+    the trivial one-big-supernode symbolic structure directly --
+    perm=identity, L = tril(ones(m,m)), xsuper=[0,m] (0-indexed).
+    tmpsiz is still computed via the real gettmpsiz() kernel (same one
+    symbolic_cholesky() uses) so numeric_cholesky()'s workspace sizing
+    matches blkchol.c exactly for this branch too.
+    """
+    import numpy as np
+    import scipy.sparse
+
+    perm = np.arange(m, dtype=np.int64)
+    xsuper = np.array([0, m], dtype=np.int64)
+    L_csc = scipy.sparse.csc_matrix(np.tril(np.ones((m, m), dtype=np.float64)))
+    Ljc = np.ascontiguousarray(L_csc.indptr, dtype=np.uintp)
+    Lir = np.ascontiguousarray(L_csc.indices, dtype=np.uintp)
+    snode = _compute_snode(xsuper, m)
+    tmpsiz = _lib.gettmpsiz(
+        Ljc.ctypes.data_as(c_size_t_p),
+        Lir.ctypes.data_as(c_size_t_p),
+        xsuper.astype(np.uintp).ctypes.data_as(c_size_t_p),
+        1,
+        snode.ctypes.data_as(c_size_t_p),
+    )
+    return {"L": L_csc, "perm": perm, "xsuper": xsuper, "tmpsiz": int(tmpsiz)}
+
+
 def numeric_cholesky(sym: dict, X_csc, pars: dict | None = None, absd=None) -> dict:
     """Numeric block sparse LDL' factorization: mirrors
     `[L.L, L.d, skip, diagadd] = blkchol(L, X, pars, absd)` (blkchol.c's
