@@ -182,3 +182,4 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+python_port/sedumi_port/libsedumi.so
