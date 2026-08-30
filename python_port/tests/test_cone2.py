@@ -153,6 +153,12 @@ def test_qinvjmul_matches_octave():
     np.testing.assert_allclose(y, data["y_qinvjmul"].ravel(), rtol=1e-8, atol=1e-9)
 
 
+def test_minpsdeig_matches_octave():
+    data, K = _load()
+    got = cone.minpsdeig(data["x"].ravel(), K)
+    np.testing.assert_allclose(got, float(data["mineig_psd"].item()), rtol=1e-10)
+
+
 def test_frameit_matches_octave():
     data = scipy.io.loadmat(FIXTURE_DIR / "cone2_frameit.mat")
     Kf = data["Kf"][0, 0]

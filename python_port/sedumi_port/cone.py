@@ -382,6 +382,36 @@ def psdfactor(x, K: dict):
     return ux, True
 
 
+def minpsdeig(x, K: dict):
+    """mineig = minpsdeig(x,K): smallest spectral value across all PSD
+    blocks (divided by 2, like psdeig's own lab). minpsdeig.m switches to
+    `eigs(...,'SA')` for blocks bigger than 500x500 purely for
+    performance (falling back to a full eig() if that fails to
+    converge); both paths compute the same mathematical quantity, so
+    this port always uses the full dense eigenvalue solve."""
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    s_sizes = [int(v) for v in K.get("s", [])]
+    if not s_sizes:
+        return np.zeros(0)
+    nr = int(K["rsdpN"])
+    nc = len(s_sizes)
+    Kq = [ki * ki for ki in s_sizes]
+    xi = x.size - sum(Kq) - sum(Kq[nr:])
+    eigv = np.zeros(nc, dtype=np.float64)
+    for i in range(nc):
+        ki = s_sizes[i]
+        qi = Kq[i]
+        XX = x[xi : xi + qi].copy()
+        xi += qi
+        if i >= nr:
+            XX = XX + 1j * x[xi : xi + qi]
+            xi += qi
+        XX = XX.reshape(ki, ki, order="F")
+        XX = XX + XX.conj().T
+        eigv[i] = np.min(np.linalg.eigvalsh(XX))
+    return np.min(eigv) / 2.0
+
+
 def _solve_ud_sandwich(TT, XX):
     """inv(TT) @ XX @ inv(TT'), computed via two triangular-agnostic
     solves (as MATLAB's `TT \\ (XX / TT')` does) rather than explicit
