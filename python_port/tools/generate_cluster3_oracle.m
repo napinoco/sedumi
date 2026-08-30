@@ -43,9 +43,23 @@ zout = psdinvjmul(evx, frms, yin, K);
 save('-v7', fullfile(out_dir, 'psdinvjmul.mat'), 'frms', 'evx', 'yin', 'zout');
 
 %% invcholfac: y = U'*U (no perm) and y = invperm(U'*U) (with perm).
+%% IMPORTANT: perm is BLOCK-LOCAL, not globally offset -- invcholfac.c's
+%% own mexFunction converts the whole perm array 1-indexed->0-indexed
+%% ONCE (perm[k] = permPr[k]-1) and then just pointer-advances by nk per
+%% block WITHOUT re-localizing, so each block's own segment of perm must
+%% independently be a 0-indexed-after-conversion permutation of
+%% 1:nk -- i.e. permv = [randperm(3)'; randperm(2)'], NOT
+%% [randperm(3)'; 3+randperm(2)']. The "3+" version used here previously
+%% is invalid input (out-of-range indices for the second, 2x2 block) --
+%% confirmed via valgrind to cause a real heap buffer overflow in
+%% invmatperm() (triuaux.c) when replayed through the Python ctypes
+%% binding: `yj = y + perm[j]*n; yj[perm[i]] = ...` writes out of bounds
+%% whenever perm[j] or perm[i] >= n for that block. This one invalid
+%% fixture is the confirmed root cause of the intermittent "free():
+%% invalid size" crashes tracked as task #17 in this port's history.
 u = rand(lenud, 1);
 y_noperm = invcholfac(u, K);
-permv = [randperm(3)'; 3 + randperm(2)'];
+permv = [randperm(3)'; randperm(2)'];
 y_perm = invcholfac(u, K, permv);
 save('-v7', fullfile(out_dir, 'invcholfac.mat'), 'u', 'y_noperm', 'permv', 'y_perm');
 

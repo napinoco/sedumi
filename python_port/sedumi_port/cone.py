@@ -741,6 +741,30 @@ def asmDxq(d: dict, x, K: dict, ddotx=None, want_t: bool = False):
     return y
 
 
+def PopK(d: dict, x, K: dict, lpq: bool = False):
+    """[y,ddotx,Dx,xTy] = PopK(d,x,K,lpq): y = P(d)*x (the full scaling
+    operator: L for LP, minus-trace/qblkmul for Lorentz, and -- unless
+    lpq -- psdscale twice for PSD). xTy is always computed here (cheap),
+    unlike the .m file's nargout-gated version."""
+    x = np.asarray(x, dtype=np.float64).ravel(order="F")
+    ix = np.asarray(K["mainblks"], dtype=np.int64).ravel()
+    i1, i2 = int(ix[0]), int(ix[1])
+    y = np.concatenate(
+        [
+            d["l"] * x[: i1 - 1],
+            -d["det"] * x[i1 - 1 : i2 - 1],
+            _native.qblkmul(d["det"], x, K["qblkstart"]),
+        ]
+    )
+    ddotx = d["q1"] * x[i1 - 1 : i2 - 1] + _native.ddot(d["q2"], x, K["qblkstart"])
+    Dx = psdscale(d, x, K)
+    if not lpq:
+        y = np.concatenate([y, psdscale(d, Dx, K, transp=True)])
+    lq = int(K["lq"])
+    xTy = float(x[:lq] @ y[:lq] + np.sum(ddotx**2) + np.sum(Dx**2))
+    return y, ddotx, Dx, xTy
+
+
 def frameit(lab, frmq, frms, K: dict):
     """x = frameit(lab,frmq,frms,K): x = [lab(L-part); qframeit(...);
     psdframeit(...)] -- a pure concatenation, `lab` in the same grouped
